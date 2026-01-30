@@ -1,0 +1,24 @@
+Transaction Hash,Block Number,Date,Time,From Address,To Address,Direction,Transaction Type,Network,Token,Amount (Crypto),USD Value,CAD Value,Gas Fee (Native),Gas Fee (USD),Gas Fee (CAD),Status,Category,Notes
+0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef,18500000,2024-01-15,14:30:00,0xClient1234567890abcdef1234567890abcdef12,0xYourWallet7890abcdef1234567890abcdef1234,INCOMING,INCOME,Ethereum,ETH,1.5,3750.00,5100.00,0,0.00,0.00,Success,Incoming Transfer,
+0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890,18500100,2024-01-16,09:15:00,0xClient2345678901bcdef01234567890abcdef23,0xYourWallet7890abcdef1234567890abcdef1234,INCOMING,INCOME,Ethereum,USDC,500.0,500.00,680.00,0,0.00,0.00,Success,Incoming Transfer,
+0xdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abc,18500200,2024-01-17,16:45:00,0xYourWallet7890abcdef1234567890abcdef1234,0xVendor3456789012cdef012345678901bcdef34,OUTGOING,EXPENSE,Ethereum,ETH,0.2,500.00,680.00,0.005,12.50,17.00,Success,Outgoing Transfer,
+0x567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234,18500300,2024-01-18,11:00:00,0xYourWallet7890abcdef1234567890abcdef1234,0xYourColdWallet01234567890abcdef12345678,OUTGOING,TRANSFER,Ethereum,ETH,1.0,2500.00,3400.00,0.003,7.50,10.20,Success,Outgoing Transfer,Internal transfer to cold storage
+
+SUMMARY
+Total Transactions,4
+Income Transactions,2
+Expense Transactions,1
+Transfer Transactions,1
+Unknown Transactions,0
+
+GROSS REVENUE (USD),$4250.00
+GROSS REVENUE (CAD),$5780.00
+
+TOTAL EXPENSES (USD),$500.00
+TOTAL EXPENSES (CAD),$680.00
+
+NET CASH FLOW (USD),$3750.00
+NET CASH FLOW (CAD),$5100.00
+
+Gas Fees (USD),$12.50
+Gas Fees (CAD),$17.00

@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - ChainLedger{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <p class="subtitle">Your crypto accounting at a glance</p>
+</div>
+
+<!-- Stats Cards -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">&#x1F4C4;</div>
+        <div class="stat-content">
+            <div class="stat-value">{{ stats.total_invoices }}</div>
+            <div class="stat-label">Total Invoices</div>
+        </div>
+    </div>
+    <div class="stat-card warning">
+        <div class="stat-icon">&#x23F3;</div>
+        <div class="stat-content">
+            <div class="stat-value">{{ stats.unpaid_invoices }}</div>
+            <div class="stat-label">Unpaid</div>
+        </div>
+    </div>
+    <div class="stat-card success">
+        <div class="stat-icon">&#x2705;</div>
+        <div class="stat-content">
+            <div class="stat-value">${{ "%.2f"|format(stats.total_paid_usd) }}</div>
+            <div class="stat-label">Total Paid (USD)</div>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">&#x1F4CA;</div>
+        <div class="stat-content">
+            <div class="stat-value">{{ stats.total_exports }}</div>
+            <div class="stat-label">Exports Generated</div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="section">
+    <h2>Quick Actions</h2>
+    <div class="action-grid">
+        <a href="/accounting" class="action-card">
+            <div class="action-icon">&#x1F4C8;</div>
+            <div class="action-title">Generate Accounting Export</div>
+            <div class="action-desc">Fetch wallet transactions and export to CSV/Excel</div>
+        </a>
+        <a href="/invoices/create" class="action-card">
+            <div class="action-icon">&#x1F9FE;</div>
+            <div class="action-title">Create Invoice</div>
+            <div class="action-desc">Generate a professional PDF invoice</div>
+        </a>
+        <a href="/invoices" class="action-card">
+            <div class="action-icon">&#x1F4CB;</div>
+            <div class="action-title">View Invoices</div>
+            <div class="action-desc">Manage your invoices and track payments</div>
+        </a>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="two-column">
+    <div class="section">
+        <h2>Recent Invoices</h2>
+        {% if stats.recent_invoices %}
+        <div class="list">
+            {% for inv in stats.recent_invoices %}
+            <div class="list-item">
+                <div class="list-item-main">
+                    <div class="list-item-title">{{ inv.invoice_number }}</div>
+                    <div class="list-item-subtitle">{{ inv.recipient_name }} - {{ inv.crypto_amount }} {{ inv.token_type }}</div>
+                </div>
+                <div class="list-item-badge {{ inv.status }}">{{ inv.status }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No invoices yet. <a href="/invoices/create">Create your first invoice</a></p>
+        {% endif %}
+    </div>
+
+    <div class="section">
+        <h2>Recent Exports</h2>
+        {% if stats.recent_exports %}
+        <div class="list">
+            {% for exp in stats.recent_exports %}
+            <div class="list-item">
+                <div class="list-item-main">
+                    <div class="list-item-title">{{ exp.blockchain|title }} Export</div>
+                    <div class="list-item-subtitle">{{ exp.transaction_count }} transactions</div>
+                </div>
+                <a href="/accounting/api/download/{{ exp.filename }}" class="btn btn-small">Download</a>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No exports yet. <a href="/accounting">Generate your first export</a></p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Saved Wallets -->
+<div class="section">
+    <div class="section-header">
+        <h2>Saved Wallets</h2>
+        <button class="btn btn-primary" onclick="showAddWalletModal()">+ Add Wallet</button>
+    </div>
+    {% if wallets %}
+    <div class="wallet-grid">
+        {% for wallet in wallets %}
+        <div class="wallet-card">
+            <div class="wallet-name">{{ wallet.name }}</div>
+            <div class="wallet-address" title="{{ wallet.address }}">{{ wallet.address[:20] }}...{{ wallet.address[-8:] }}</div>
+            <div class="wallet-chain">{{ wallet.blockchain|title }}</div>
+            <button class="btn btn-small btn-danger" onclick="deleteWallet('{{ wallet.address }}')">Remove</button>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No saved wallets. Add wallets for quick access when generating exports.</p>
+    {% endif %}
+</div>
+
+<!-- Add Wallet Modal -->
+<div id="addWalletModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add Wallet</h3>
+            <button class="modal-close" onclick="hideAddWalletModal()">&times;</button>
+        </div>
+        <form id="addWalletForm" onsubmit="addWallet(event)">
+            <div class="form-group">
+                <label for="walletName">Name</label>
+                <input type="text" id="walletName" placeholder="My ETH Wallet" required>
+            </div>
+            <div class="form-group">
+                <label for="walletBlockchain">Blockchain</label>
+                <select id="walletBlockchain">
+                    <option value="ethereum">Ethereum</option>
+                    <option value="bitcoin">Bitcoin</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="walletAddress">Address</label>
+                <input type="text" id="walletAddress" placeholder="0x..." required>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="hideAddWalletModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Wallet</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showAddWalletModal() {
+    document.getElementById('addWalletModal').style.display = 'flex';
+}
+
+function hideAddWalletModal() {
+    document.getElementById('addWalletModal').style.display = 'none';
+}
+
+async function addWallet(event) {
+    event.preventDefault();
+
+    const data = {
+        name: document.getElementById('walletName').value,
+        blockchain: document.getElementById('walletBlockchain').value,
+        address: document.getElementById('walletAddress').value,
+    };
+
+    try {
+        const response = await fetch('/api/wallets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+
+        if (response.ok) {
+            window.location.reload();
+        } else {
+            const result = await response.json();
+            alert(result.error || 'Failed to save wallet');
+        }
+    } catch (error) {
+        alert('Error saving wallet: ' + error.message);
+    }
+}
+
+async function deleteWallet(address) {
+    if (!confirm('Remove this wallet?')) return;
+
+    try {
+        const response = await fetch(`/api/wallets/${encodeURIComponent(address)}`, {
+            method: 'DELETE',
+        });
+
+        if (response.ok) {
+            window.location.reload();
+        } else {
+            alert('Failed to remove wallet');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+</script>
+{% endblock %}

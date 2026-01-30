@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block title %}Invoices - ChainLedger{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Invoices</h1>
+    <p class="subtitle">Manage your crypto invoices</p>
+</div>
+
+<div class="section-header">
+    <div class="filter-tabs">
+        <button class="filter-tab active" onclick="filterInvoices(null, this)">All</button>
+        <button class="filter-tab" onclick="filterInvoices('unpaid', this)">Unpaid</button>
+        <button class="filter-tab" onclick="filterInvoices('paid', this)">Paid</button>
+    </div>
+    <a href="/invoices/create" class="btn btn-primary">+ Create Invoice</a>
+</div>
+
+<div id="invoicesList" class="invoices-grid">
+    {% if invoices %}
+        {% for inv in invoices %}
+        <div class="invoice-card" data-status="{{ inv.status }}">
+            <div class="invoice-header">
+                <span class="invoice-number">{{ inv.invoice_number }}</span>
+                <span class="invoice-badge {{ inv.status }}">{{ inv.status }}</span>
+            </div>
+            <div class="invoice-body">
+                <div class="invoice-recipient">{{ inv.recipient_name }}</div>
+                <div class="invoice-amount">{{ inv.crypto_amount }} {{ inv.token_type }}</div>
+                {% if inv.usd_value %}
+                <div class="invoice-fiat">${{ "%.2f"|format(inv.usd_value) }} USD</div>
+                {% endif %}
+                <div class="invoice-date">{{ inv.created_at[:10] }}</div>
+            </div>
+            <div class="invoice-actions">
+                <a href="/invoices/api/download/{{ inv.pdf_filename }}" class="btn btn-small">Download PDF</a>
+                {% if inv.status == 'unpaid' %}
+                <button class="btn btn-small btn-success" onclick="markAsPaid('{{ inv.id }}')">Mark Paid</button>
+                {% endif %}
+                <button class="btn btn-small btn-danger" onclick="confirmDelete('{{ inv.id }}', '{{ inv.invoice_number }}')">Delete</button>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <p class="empty-state full-width">No invoices yet. <a href="/invoices/create">Create your first invoice</a></p>
+    {% endif %}
+</div>
+
+<!-- Mark as Paid Modal -->
+<div id="markPaidModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Mark Invoice as Paid</h3>
+            <button class="modal-close" onclick="hideMarkPaidModal()">&times;</button>
+        </div>
+        <form id="markPaidForm" onsubmit="submitMarkPaid(event)">
+            <input type="hidden" id="markPaidInvoiceId">
+            <div class="form-group">
+                <label for="txHash">Transaction Hash (Optional)</label>
+                <input type="text" id="txHash" placeholder="0x...">
+                <small class="form-hint">Enter the blockchain transaction hash for your records</small>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="hideMarkPaidModal()">Cancel</button>
+                <button type="submit" class="btn btn-success">Confirm Payment</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div id="deleteModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Delete Invoice</h3>
+            <button class="modal-close" onclick="hideDeleteModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>Are you sure you want to delete invoice <strong id="deleteInvoiceNumber"></strong>?</p>
+            <p class="text-muted">This action cannot be undone.</p>
+        </div>
+        <input type="hidden" id="deleteInvoiceId">
+        <div class="form-actions">
+            <button type="button" class="btn" onclick="hideDeleteModal()">Cancel</button>
+            <button type="button" class="btn btn-danger" onclick="submitDelete()">Delete</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterInvoices(status, button) {
+    // Update active tab
+    document.querySelectorAll('.filter-tab').forEach(tab => tab.classList.remove('active'));
+    button.classList.add('active');
+
+    // Filter cards
+    document.querySelectorAll('.invoice-card').forEach(card => {
+        if (!status || card.dataset.status === status) {
+            card.style.display = 'block';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+
+function markAsPaid(invoiceId) {
+    document.getElementById('markPaidInvoiceId').value = invoiceId;
+    document.getElementById('markPaidModal').style.display = 'flex';
+}
+
+function hideMarkPaidModal() {
+    document.getElementById('markPaidModal').style.display = 'none';
+}
+
+async function submitMarkPaid(event) {
+    event.preventDefault();
+
+    const invoiceId = document.getElementById('markPaidInvoiceId').value;
+    const txHash = document.getElementById('txHash').value;
+
+    try {
+        const response = await fetch(`/invoices/api/${invoiceId}/status`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'paid', tx_hash: txHash }),
+        });
+
+        if (response.ok) {
+            window.location.reload();
+        } else {
+            const result = await response.json();
+            alert(result.error || 'Failed to update invoice');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+function confirmDelete(invoiceId, invoiceNumber) {
+    document.getElementById('deleteInvoiceId').value = invoiceId;
+    document.getElementById('deleteInvoiceNumber').textContent = invoiceNumber;
+    document.getElementById('deleteModal').style.display = 'flex';
+}
+
+function hideDeleteModal() {
+    document.getElementById('deleteModal').style.display = 'none';
+}
+
+async function submitDelete() {
+    const invoiceId = document.getElementById('deleteInvoiceId').value;
+
+    try {
+        const response = await fetch(`/invoices/api/${invoiceId}`, {
+            method: 'DELETE',
+        });
+
+        if (response.ok) {
+            window.location.reload();
+        } else {
+            const result = await response.json();
+            alert(result.error || 'Failed to delete invoice');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+</script>
+{% endblock %}
