@@ -136,6 +136,20 @@ It's designed for desktop use.
 
 ---
 
+## Limited Reconciliation
+
+The reconciliation layer compares on-chain data with itself and with ChainLedger's own invoices. It does not:
+
+- Import exchange statements (CSV) or exchange account balances
+- Import bank statements
+- Import from or post to QuickBooks, Xero or any other ledger
+- Reconcile ERC-20 token balances (only native ETH and BTC)
+- Fetch historical Bitcoin balances (Blockstream only reports the current balance; past balances must be entered manually)
+
+Amount-and-time transfer matches are heuristics and are flagged for review. See [reconciliation.md](reconciliation.md).
+
+---
+
 ## Summary
 
 ChainLedger is a **record-keeping tool**, not a tax solution. It helps you organize your crypto transactions into a format that's useful for accounting. Everything else—tax interpretation, filing, compliance—is your responsibility.

@@ -89,8 +89,25 @@ def validate_bitcoin_address(address: str) -> bool:
 # Abstract Fetcher
 # =============================================================================
 
+class HistoricalBalanceUnavailable(Exception):
+    """Raised when the data source cannot return a balance for a past date."""
+
+
 class BlockchainFetcher(ABC):
     """Abstract base class for blockchain transaction fetchers."""
+
+    def get_balance(self, wallet_address: str, as_of: Optional[datetime] = None) -> Decimal:
+        """
+        Return the native-asset balance of a wallet.
+
+        Args:
+            wallet_address: Address to query
+            as_of: Point in time (UTC). None means the current balance.
+
+        Raises:
+            HistoricalBalanceUnavailable: if the source cannot answer for `as_of`.
+        """
+        raise HistoricalBalanceUnavailable("Balance lookup not supported for this network")
 
     @abstractmethod
     def fetch_transactions(
@@ -151,6 +168,56 @@ class EthereumFetcher(BlockchainFetcher):
         wei = int(hex_value, 16)
         return Decimal(wei) / Decimal(10 ** 18)
 
+    def _iter_asset_transfers(self, params: dict):
+        """Yield every transfer for a query, following Alchemy's pageKey pagination."""
+        page_params = dict(params)
+        while True:
+            result = self._rpc_call("alchemy_getAssetTransfers", [page_params])
+            yield from result.get("transfers", [])
+            page_key = result.get("pageKey")
+            if not page_key:
+                break
+            page_params["pageKey"] = page_key
+
+    def _get_tx_fee(self, tx_hash: str) -> Decimal:
+        """Gas fee paid for a transaction, in ETH (gasUsed x effectiveGasPrice)."""
+        if not tx_hash:
+            return Decimal(0)
+        try:
+            receipt = self._rpc_call("eth_getTransactionReceipt", [tx_hash])
+            gas_used = int(receipt.get("gasUsed", "0x0"), 16)
+            gas_price = int(receipt.get("effectiveGasPrice", "0x0"), 16)
+            return Decimal(gas_used * gas_price) / Decimal(10 ** 18)
+        except Exception as e:
+            logger.warning(f"Failed to fetch fee for {tx_hash[:16]}: {e}")
+            return Decimal(0)
+
+    def _find_block_at(self, as_of: datetime) -> int:
+        """Return the number of the last block with timestamp <= as_of."""
+        target = int(as_of.timestamp())
+        latest = int(self._rpc_call("eth_blockNumber", []), 16)
+        if self._get_block_timestamp(hex(latest)).timestamp() <= target:
+            return latest
+        lo, hi = 0, latest
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if self._get_block_timestamp(hex(mid)).timestamp() <= target:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo
+
+    def get_balance(self, wallet_address: str, as_of: Optional[datetime] = None) -> Decimal:
+        """
+        Native ETH balance via eth_getBalance.
+
+        For a past date, the balance is read at the last block mined at or before
+        `as_of`. This needs an archive-capable endpoint (Alchemy provides one).
+        """
+        block_tag = "latest" if as_of is None else hex(self._find_block_at(as_of))
+        wei = int(self._rpc_call("eth_getBalance", [wallet_address, block_tag]), 16)
+        return Decimal(wei) / Decimal(10 ** 18)
+
     def _get_token_symbol(self, contract_address: str) -> str:
         """Get token symbol from contract (simplified lookup)."""
         # Common token addresses
@@ -182,9 +249,7 @@ class EthereumFetcher(BlockchainFetcher):
                 "category": ["external", "internal"],
             }
 
-            transfers = self._rpc_call("alchemy_getAssetTransfers", [params])
-
-            for tx in transfers.get("transfers", []):
+            for tx in self._iter_asset_transfers(params):
                 try:
                     block_num = int(tx.get("blockNum", "0x0"), 16)
                     block_hex = tx.get("blockNum", "0x0")
@@ -213,7 +278,12 @@ class EthereumFetcher(BlockchainFetcher):
                         asset=tx.get("asset", "ETH"),
                         amount_raw=str(int(value * 10**18)),
                         amount_decimal=str(value),
-                        tx_fee_native="0",  # Would need separate lookup
+                        # Gas is paid by the sender of an external transaction.
+                        tx_fee_native=(
+                            str(self._get_tx_fee(tx.get("hash", "")))
+                            if not is_incoming and tx.get("category") == "external"
+                            else "0"
+                        ),
                         tx_status="Success",
                         category="Incoming Transfer" if is_incoming else "Outgoing Transfer",
                         notes="",
@@ -263,11 +333,7 @@ class BitcoinFetcher(BlockchainFetcher):
         rows = []
         wallet_lower = wallet_address.lower()
 
-        # Fetch transactions
-        url = f"{self.BASE_URL}/address/{wallet_address}/txs"
-        response = self.client.get(url)
-        response.raise_for_status()
-        transactions = response.json()
+        transactions = self._fetch_confirmed_txs(wallet_address)
 
         for tx in transactions:
             try:
@@ -309,7 +375,9 @@ class BitcoinFetcher(BlockchainFetcher):
                     amount_sats = net
                 elif net < 0:
                     direction = "Out"
-                    amount_sats = abs(net)
+                    # The net outflow includes the miner fee. Record the amount
+                    # sent and the fee separately so the fee is not counted twice.
+                    amount_sats = abs(net) - tx.get("fee", 0)
                 else:
                     continue  # No net change for this wallet
 
@@ -341,6 +409,41 @@ class BitcoinFetcher(BlockchainFetcher):
                 continue
 
         return sorted(rows, key=lambda r: (r.block_date, r.block_time))
+
+    def _fetch_confirmed_txs(self, wallet_address: str) -> list[dict]:
+        """Fetch the full confirmed history (Blockstream pages 25 txs at a time)."""
+        url = f"{self.BASE_URL}/address/{wallet_address}/txs/chain"
+        transactions: list[dict] = []
+        last_seen = None
+        while True:
+            page_url = f"{url}/{last_seen}" if last_seen else url
+            response = self.client.get(page_url)
+            response.raise_for_status()
+            page = response.json()
+            if not page:
+                break
+            transactions.extend(page)
+            if len(page) < 25:
+                break
+            last_seen = page[-1].get("txid")
+        return transactions
+
+    def get_balance(self, wallet_address: str, as_of: Optional[datetime] = None) -> Decimal:
+        """
+        Current confirmed BTC balance from Blockstream.
+
+        Blockstream has no "balance at date" endpoint, so a past date raises
+        HistoricalBalanceUnavailable and the caller must supply the figure.
+        """
+        if as_of is not None and as_of < datetime.now(timezone.utc):
+            raise HistoricalBalanceUnavailable(
+                "Blockstream only reports the current balance; enter a historical balance manually"
+            )
+        response = self.client.get(f"{self.BASE_URL}/address/{wallet_address}")
+        response.raise_for_status()
+        stats = response.json().get("chain_stats", {})
+        sats = stats.get("funded_txo_sum", 0) - stats.get("spent_txo_sum", 0)
+        return Decimal(sats) / Decimal(100_000_000)
 
     def close(self) -> None:
         """Close HTTP client."""
@@ -386,6 +489,10 @@ class LedgerGenerator:
             from_date=from_date,
             to_date=to_date,
         )
+
+    def get_balance(self, wallet_address: str, as_of: Optional[datetime] = None) -> Decimal:
+        """Native-asset balance of a wallet (see the fetcher for date support)."""
+        return self.fetcher.get_balance(wallet_address, as_of)
 
     def close(self) -> None:
         """Clean up resources."""

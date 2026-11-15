@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+
+{% block title %}Reconciliation - ChainLedger{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Reconciliation</h1>
+    <p class="subtitle">Match transfers between your wallets, match payments to invoices, and check wallet balances</p>
+</div>
+
+<div class="card">
+    <form id="reconForm" onsubmit="runReconciliation(event)">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="blockchain">Blockchain</label>
+                <select id="blockchain" onchange="updateApiKeyVisibility()">
+                    {% for key, network in networks.items() %}
+                    <option value="{{ key }}" data-requires-key="{{ network.requires_api_key|lower }}">{{ network.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" id="apiKeyGroup">
+                <label for="apiKey">Alchemy API Key</label>
+                <input type="password" id="apiKey" placeholder="Enter your API key">
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="walletAddresses">Your Wallet Address(es)</label>
+            <textarea id="walletAddresses" rows="2" placeholder="Comma-separated. Include every wallet you move funds between."></textarea>
+            <small class="form-hint">Saved self-custodial wallets on this blockchain are always treated as yours for transfer matching.</small>
+            {% if wallets %}
+            <div class="saved-wallets">
+                <small>Quick add:</small>
+                {% for wallet in wallets %}
+                <button type="button" class="tag" onclick="addWalletAddress('{{ wallet.address }}')" title="{{ wallet.address }}">{{ wallet.name }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="periodStart">Period Start</label>
+                <input type="date" id="periodStart" required>
+                <small class="form-hint">Opening balance is taken at the start of this day (UTC)</small>
+            </div>
+            <div class="form-group">
+                <label for="periodEnd">Period End</label>
+                <input type="date" id="periodEnd" required>
+                <small class="form-hint">Closing balance is taken at the end of this day (UTC)</small>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="timeWindow">Transfer time window (hours)</label>
+                <input type="number" id="timeWindow" value="2" min="0" step="0.5">
+                <small class="form-hint">Only used when the two sides have different txids</small>
+            </div>
+            <div class="form-group">
+                <label for="tolerance">Invoice amount tolerance (%)</label>
+                <input type="number" id="tolerance" value="0.5" min="0" step="0.1">
+            </div>
+        </div>
+
+        <div class="form-group">
+            <div class="checkbox-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="includePrices">
+                    Value network fee lines in USD/CAD (CoinGecko, may be slow)
+                </label>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-large" id="runBtn">Run Reconciliation</button>
+            <button type="button" class="btn" onclick="rerun()">Re-run last fetch</button>
+        </div>
+    </form>
+</div>
+
+<div id="progressSection" class="progress-section" style="display:none;">
+    <div class="progress-bar"><div class="progress-bar-fill"></div></div>
+    <p class="loading-text">Fetching transactions and balances...</p>
+</div>
+
+<div id="errorSection" class="result-section" style="display:none;">
+    <div class="result-card error"><h3>Error</h3><p id="errorMessage"></p></div>
+</div>
+
+<div id="results" style="display:none;">
+    <div class="section">
+        <div class="result-card success">
+            <h3>Reconciliation Report</h3>
+            <p id="runInfo" class="text-muted"></p>
+            <table class="summary-table" id="summaryTable"></table>
+            <div class="result-actions">
+                <a id="dlXlsx" class="btn btn-success">Download Excel</a>
+                <a id="dlCsv" class="btn">Download CSV</a>
+                <button class="btn" onclick="applyTransfers()" title="Save confirmed transfer matches as TRANSFER classifications used by the Accounting export">Use matched transfers in Accounting export</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="section"><h2>Exceptions</h2><div class="card recon-scroll" id="exceptions"></div></div>
+    <div class="section"><h2>Wallet Balances</h2><div class="card recon-scroll" id="balances"></div></div>
+    <div class="section"><h2>Own-Wallet Transfers</h2><div class="card recon-scroll" id="transfers"></div></div>
+    <div class="section"><h2>Unmatched Transfer Legs</h2><div class="card recon-scroll" id="unmatchedLegs"></div></div>
+    <div class="section"><h2>Network Fees (expense lines)</h2><div class="card recon-scroll" id="fees"></div></div>
+    <div class="section"><h2>Invoices</h2><div class="card recon-scroll" id="invoices"></div></div>
+    <div class="section"><h2>Unmatched Incoming Payments</h2><div class="card recon-scroll" id="payments"></div></div>
+    <div class="section"><h2>Active Manual Overrides</h2><div class="card recon-scroll" id="overrides"></div></div>
+    <div class="section"><h2>Override Log</h2><div class="card recon-scroll" id="log"></div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.recon-scroll { overflow-x: auto; }
+.recon-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.recon-table th, .recon-table td { padding: 6px 8px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+.recon-table th { background: var(--bg-tertiary); white-space: nowrap; }
+.recon-table td.mono { font-family: monospace; font-size: 0.8rem; word-break: break-all; max-width: 220px; }
+.recon-table textarea { width: 100%; min-width: 180px; font-size: 0.8rem; }
+.status-paid { color: var(--success-color); font-weight: 600; }
+.status-bad { color: var(--danger-color); font-weight: 600; }
+.status-warn { color: var(--warning-color); font-weight: 600; }
+</style>
+<script>
+let report = null;
+
+function esc(v) {
+    return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function short(h) { h = String(h || ''); return h.length > 18 ? h.slice(0, 10) + '…' + h.slice(-6) : h; }
+function table(headers, rows) {
+    if (!rows.length) return '<p class="empty-state">None</p>';
+    return `<table class="recon-table"><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+            <tbody>${rows.map(r => `<tr>${r.join('')}</tr>`).join('')}</tbody></table>`;
+}
+function td(v, cls) { return `<td${cls ? ` class="${cls}"` : ''}>${esc(v)}</td>`; }
+function tdHtml(html) { return `<td>${html}</td>`; }
+
+function updateApiKeyVisibility() {
+    const opt = document.getElementById('blockchain').selectedOptions[0];
+    document.getElementById('apiKeyGroup').style.display = opt.dataset.requiresKey === 'true' ? 'block' : 'none';
+}
+function addWalletAddress(addr) {
+    const box = document.getElementById('walletAddresses');
+    const list = box.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (!list.includes(addr)) list.push(addr);
+    box.value = list.join(', ');
+}
+
+async function post(url, body, method = 'POST') {
+    const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) });
+    const data = await res.json();
+    if (!res.ok || data.success === false) throw new Error(data.error || 'Request failed');
+    return data;
+}
+
+function showError(msg) {
+    document.getElementById('errorSection').style.display = 'block';
+    document.getElementById('errorMessage').textContent = msg;
+}
+
+async function runReconciliation(event) {
+    event.preventDefault();
+    document.getElementById('errorSection').style.display = 'none';
+    document.getElementById('progressSection').style.display = 'block';
+    document.getElementById('runBtn').disabled = true;
+    try {
+        render(await post('/reconciliation/api/run', {
+            blockchain: document.getElementById('blockchain').value,
+            api_key: document.getElementById('apiKey').value,
+            wallet_addresses: document.getElementById('walletAddresses').value,
+            period_start: document.getElementById('periodStart').value,
+            period_end: document.getElementById('periodEnd').value,
+            time_window_hours: document.getElementById('timeWindow').value,
+            invoice_tolerance_pct: document.getElementById('tolerance').value,
+            include_prices: document.getElementById('includePrices').checked,
+        }));
+    } catch (e) { showError(e.message); }
+    document.getElementById('progressSection').style.display = 'none';
+    document.getElementById('runBtn').disabled = false;
+}
+
+async function rerun() {
+    document.getElementById('errorSection').style.display = 'none';
+    try { render(await post('/reconciliation/api/rerun')); } catch (e) { showError(e.message); }
+}
+
+async function addOverride(type, fields, question) {
+    const note = prompt((question || 'Reason for this manual override') + ' (required, saved in the override log):');
+    if (!note || !note.trim()) return;
+    try { await post('/reconciliation/api/overrides', { type, fields, note }); await rerun(); }
+    catch (e) { alert(e.message); }
+}
+async function removeOverride(id) {
+    const note = prompt('Reason for removing this override (saved in the override log):');
+    if (note === null) return;
+    try { await post(`/reconciliation/api/overrides/${encodeURIComponent(id)}`, { note }, 'DELETE'); await rerun(); }
+    catch (e) { alert(e.message); }
+}
+async function saveNote(exceptionId, inputId) {
+    try {
+        await post('/reconciliation/api/notes', { exception_id: exceptionId, note: document.getElementById(inputId).value }, 'PUT');
+        await rerun();
+    } catch (e) { alert(e.message); }
+}
+async function applyTransfers() {
+    if (!confirm('Save every same-txid or manually linked transfer as a TRANSFER classification override? This affects future Accounting exports and is logged.')) return;
+    try { const r = await post('/reconciliation/api/apply-transfers'); alert(`${r.count} transaction hash(es) set to TRANSFER.`); await rerun(); }
+    catch (e) { alert(e.message); }
+}
+function setBalance(kind, wallet, date) {
+    const amount = prompt(`Enter the ${kind} balance for ${wallet} on ${date} (native units):`);
+    if (!amount) return;
+    addOverride(`${kind}_balance`, { wallet_address: wallet, date, amount }, 'Source of this balance (e.g. exchange statement, explorer)');
+}
+
+function statusClass(s) { return s === 'paid' ? 'status-paid' : (s === 'unpaid' ? 'status-bad' : 'status-warn'); }
+
+function render(r) {
+    report = r;
+    document.getElementById('results').style.display = 'block';
+    document.getElementById('runInfo').textContent =
+        `${r.network} · ${r.period_start} to ${r.period_end} · fetched ${r.fetched_at} · report generated ${r.generated_at}`;
+    document.getElementById('dlCsv').href = r.download_csv;
+    document.getElementById('dlXlsx').href = r.download_xlsx;
+
+    const s = r.summary;
+    const statuses = Object.entries(s.invoice_statuses).map(([k, v]) => `${v} ${k}`).join(', ') || 'none';
+    document.getElementById('summaryTable').innerHTML = [
+        ['Matched own-wallet transfers', s.matched_transfers],
+        ['Unmatched transfer legs', s.unmatched_transfer_legs],
+        ['Network fee expense lines', s.network_fee_lines],
+        ['Invoices', `${s.invoices} (${statuses})`],
+        ['Unmatched incoming payments', s.unmatched_payments],
+        ['Balances reconciled', `${s.balances_reconciled} of ${s.balances_checked}`],
+        ['Exceptions to review', s.exceptions],
+    ].map(([k, v]) => `<tr><td>${esc(k)}</td><td><strong>${esc(v)}</strong></td></tr>`).join('');
+
+    document.getElementById('exceptions').innerHTML = table(
+        ['Category', 'Reference', 'Date', 'Asset', 'Amount', 'Detail', 'Note'],
+        r.exceptions.map((e, i) => [
+            td(e.category), td(short(e.reference), 'mono'), td(e.date), td(e.asset), td(e.amount), td(e.detail),
+            tdHtml(`<textarea id="note${i}" rows="2">${esc(e.note)}</textarea>
+                    <button class="btn btn-small" onclick="saveNote('${esc(e.exception_id)}', 'note${i}')">Save note</button>`),
+        ]));
+
+    document.getElementById('balances').innerHTML = table(
+        ['Wallet', 'Opening', 'Inflows', 'Outflows', 'Fees', 'Expected closing', 'Actual closing', 'Difference', 'Sources', ''],
+        r.balances.map(b => [
+            td(short(b.wallet_address), 'mono'),
+            td(b.opening_balance ?? '—'), td(b.inflows), td(b.outflows), td(b.fees),
+            td(b.expected_closing ?? '—'), td(b.actual_closing ?? '—'),
+            td(b.difference ?? 'n/a', b.reconciled ? 'status-paid' : 'status-bad'),
+            td(`Opening: ${b.opening_source}; Closing: ${b.actual_source}`),
+            tdHtml(`<button class="btn btn-small" onclick="setBalance('opening', '${esc(b.wallet_address)}', '${esc(b.period_start)}')">Enter opening</button>
+                    <button class="btn btn-small" onclick="setBalance('closing', '${esc(b.wallet_address)}', '${esc(b.period_end)}')">Enter closing</button>`),
+        ]));
+
+    document.getElementById('transfers').innerHTML = table(
+        ['ID', 'Method', 'From wallet', 'Out tx', 'To wallet', 'In tx', 'Asset', 'Sent', 'Received', 'Fee', ''],
+        r.transfers.map(t => [
+            td(t.transfer_id), td(t.method), td(short(t.out_wallet), 'mono'), td(short(t.out_tx_hash), 'mono'),
+            td(short(t.in_wallet), 'mono'), td(short(t.in_tx_hash), 'mono'), td(t.asset),
+            td(t.amount_sent), td(t.amount_received), td(`${t.fee} ${t.fee_asset}`),
+            tdHtml(`<button class="btn btn-small" onclick="addOverride('unlink_transfer', {row_id: '${esc(t.out_row_id)}'}, 'Why these rows are not one transfer')">Unlink</button>`),
+        ]));
+
+    const legs = r.unmatched_transfer_legs;
+    document.getElementById('unmatchedLegs').innerHTML = table(
+        ['Side', 'Date', 'Wallet', 'Tx', 'Asset', 'Amount', 'Reason', 'Link to'],
+        legs.map((u, i) => {
+            const opposite = legs.filter(o => o.side !== u.side);
+            const options = opposite.map(o => `<option value="${esc(o.row_id)}">${esc(o.date)} · ${esc(o.amount)} ${esc(o.asset)} · ${esc(short(o.tx_hash))}</option>`).join('');
+            const outId = u.side === 'outgoing' ? `'${esc(u.row_id)}'` : `document.getElementById('leg${i}').value`;
+            const inId = u.side === 'incoming' ? `'${esc(u.row_id)}'` : `document.getElementById('leg${i}').value`;
+            return [
+                td(u.side), td(u.date), td(short(u.wallet_address), 'mono'), td(short(u.tx_hash), 'mono'),
+                td(u.asset), td(u.amount), td(u.reason),
+                tdHtml(opposite.length ? `<select id="leg${i}">${options}</select>
+                    <button class="btn btn-small" onclick="addOverride('link_transfer', {out_row_id: ${outId}, in_row_id: ${inId}}, 'Why these rows are one transfer')">Link</button>` : '—'),
+            ];
+        }));
+
+    document.getElementById('fees').innerHTML = table(
+        ['Transfer', 'Date', 'Wallet', 'Tx', 'Fee', 'USD', 'CAD'],
+        r.fee_lines.map(f => [
+            td(f.transfer_id), td(`${f.block_date} ${f.block_time}`), td(short(f.wallet_address), 'mono'),
+            td(short(f.tx_hash), 'mono'), td(`${f.amount} ${f.asset}`),
+            td(f.usd_value == null ? '' : f.usd_value.toFixed(2)), td(f.cad_value == null ? '' : f.cad_value.toFixed(2)),
+        ]));
+
+    document.getElementById('invoices').innerHTML = table(
+        ['Invoice', 'Date', 'Amount', 'Received', 'Difference', 'Status', 'Invoice list status', 'Method', 'Payer verified', 'Payments'],
+        r.invoices.map(m => [
+            td(m.invoice_number), td(m.invoice_date), td(`${m.invoice_amount} ${m.asset}`), td(m.amount_received),
+            td(m.difference), td(m.status, statusClass(m.status)), td(m.recorded_status), td(m.method || '—'),
+            td(m.payer_verified ? 'yes' : 'no'),
+            tdHtml(m.payment_row_ids.map((pid, k) => `<div class="mono">${esc(short(m.payment_tx_hashes[k]))}
+                <button class="btn btn-small" onclick="addOverride('unmatch_payment', {row_id: '${esc(pid)}'}, 'Why this payment does not belong to the invoice')">Unmatch</button></div>`).join('') || '—'),
+        ]));
+
+    const invoiceOptions = (r.open_invoices || []).map(i => `<option value="${esc(i.id)}">${esc(i.invoice_number)} · ${esc(i.crypto_amount)} ${esc(i.token_type)}</option>`).join('');
+    document.getElementById('payments').innerHTML = table(
+        ['Date', 'Wallet', 'Tx', 'From', 'Asset', 'Amount', 'Reason', 'Match to invoice'],
+        r.unmatched_payments.map((p, i) => [
+            td(p.date), td(short(p.wallet_address), 'mono'), td(short(p.tx_hash), 'mono'), td(short(p.from_address), 'mono'),
+            td(p.asset), td(p.amount), td(p.reason),
+            tdHtml(invoiceOptions ? `<select id="pay${i}">${invoiceOptions}</select>
+                <button class="btn btn-small" onclick="addOverride('match_invoice', {invoice_id: document.getElementById('pay${i}').value, row_id: '${esc(p.row_id)}'}, 'Why this payment belongs to the invoice')">Match</button>` : '—'),
+        ]));
+
+    document.getElementById('overrides').innerHTML = table(
+        ['Created (UTC)', 'Type', 'Details', 'Reason', ''],
+        r.active_overrides.map(o => [
+            td(o.created_at), td(o.type),
+            td(Object.entries(o).filter(([k]) => !['id','type','note','created_at','active','removed_at'].includes(k)).map(([k, v]) => `${k}=${v}`).join(', '), 'mono'),
+            td(o.note), tdHtml(`<button class="btn btn-small btn-danger" onclick="removeOverride('${esc(o.id)}')">Remove</button>`),
+        ]));
+
+    document.getElementById('log').innerHTML = table(
+        ['Timestamp (UTC)', 'Action', 'Details', 'Note'],
+        r.override_log.slice().reverse().map(e => [td(e.timestamp), td(e.action), td(e.details, 'mono'), td(e.note)]));
+}
+
+updateApiKeyVisibility();
+</script>
+{% endblock %}

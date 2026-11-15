@@ -16,6 +16,15 @@ A sample accounting export showing:
 
 Note how the TRANSFER transaction is excluded from revenue/expense totals.
 
+## sample_reconciliation.csv / sample_reconciliation.xlsx
+
+A sample reconciliation report built from the fictional data in `tests/sample_data.py` (a hot and a cold Ethereum wallet, three invoices, one month). It shows:
+- 1 own-wallet transfer matched by txid, with its network fee as a separate expense line
+- Invoice statuses: 1 paid, 1 partially paid (two instalments from the client's wallet), 1 unpaid
+- 1 incoming payment with no invoice (exception)
+- Balance check: the cold wallet reconciles; the hot wallet shows a −0.0005 ETH difference (exception)
+- An exception note and its entry in the override log
+
 ## sample_invoice.pdf
 
 To generate a sample invoice:

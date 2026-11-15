@@ -6,6 +6,7 @@ Provides endpoints for:
 - Dashboard with stats
 - Accounting exports
 - Invoice creation and management
+- Reconciliation (transfer matching, invoice matching, balance checks)
 """
 
 from __future__ import annotations
@@ -17,7 +18,8 @@ import os
 import sys
 import uuid
 from dataclasses import dataclass, asdict, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +32,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.wallet import LedgerGenerator, validate_ethereum_address, validate_bitcoin_address, SUPPORTED_NETWORKS
 from src.exports import ExportService, get_price_oracle
 from src.invoices import InvoiceGenerator
+from src.reconciliation import overrides as recon_overrides
+from src.reconciliation.service import ReconciliationService, fetch_inputs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -300,6 +304,19 @@ class MetadataManager:
             return True
         return False
 
+    # Reconciliation state (overrides, exception notes, override log)
+    def get_reconciliation_state(self) -> dict:
+        state = self._data.setdefault("reconciliation", recon_overrides.empty_state())
+        for key, default in recon_overrides.empty_state().items():
+            state.setdefault(key, default)
+        return state
+
+    def save_reconciliation_state(self) -> None:
+        self._save()
+
+    def get_invoice_dicts(self) -> list[dict]:
+        return [dict(d) for d in self._data.get("invoices", [])]
+
     # Dashboard stats
     def get_dashboard_stats(self) -> dict:
         invoices = self.get_invoices(limit=1000)
@@ -516,6 +533,160 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
         if metadata.remove_classification_override(tx_hash):
             return jsonify({"success": True})
         return jsonify({"error": "Not found"}), 404
+
+    # -------------------------------------------------------------------------
+    # Reconciliation Routes
+    # -------------------------------------------------------------------------
+
+    recon_service = ReconciliationService(data_dir=data_dir, exports_dir=metadata.exports_dir)
+
+    def _run_reconciliation(inputs: dict, settings: dict) -> dict:
+        blockchain = inputs["network"]
+        own_wallets = sorted(
+            metadata.get_self_custodial_addresses(blockchain)
+            | {a.lower() for a in inputs["wallet_addresses"]}
+        )
+        report, files = recon_service.run(
+            inputs=inputs,
+            own_wallets=own_wallets,
+            invoices=metadata.get_invoice_dicts(),
+            state=metadata.get_reconciliation_state(),
+            classification_overrides=metadata.get_classification_overrides(),
+            time_window_hours=float(settings.get("time_window_hours", 2)),
+            invoice_tolerance_pct=Decimal(str(settings.get("invoice_tolerance_pct", "0.5"))),
+            include_prices=bool(settings.get("include_prices", False)),
+        )
+        result = report.to_dict()
+        result["success"] = True
+        result["fetched_at"] = inputs.get("fetched_at")
+        result["period_start"] = inputs.get("period_start")
+        result["period_end"] = inputs.get("period_end")
+        result["network"] = blockchain
+        result["download_csv"] = f"/accounting/api/download/{files['csv']}"
+        result["download_xlsx"] = f"/accounting/api/download/{files['xlsx']}"
+        result["open_invoices"] = [
+            {"id": i["id"], "invoice_number": i.get("invoice_number", ""),
+             "token_type": i.get("token_type", ""), "crypto_amount": i.get("crypto_amount")}
+            for i in metadata.get_invoice_dicts() if i.get("status") != "cancelled"
+        ]
+        return result
+
+    @app.route("/reconciliation")
+    def reconciliation_page():
+        wallets = metadata.get_saved_wallets()
+        return render_template("reconciliation.html", wallets=wallets, networks=SUPPORTED_NETWORKS)
+
+    @app.route("/reconciliation/api/run", methods=["POST"])
+    def run_reconciliation():
+        try:
+            data = request.get_json()
+            blockchain = data.get("blockchain", "ethereum").lower()
+            if blockchain not in SUPPORTED_NETWORKS:
+                return jsonify({"success": False, "error": "Unsupported blockchain"}), 400
+            api_key = (data.get("api_key") or "").strip() or None
+            if SUPPORTED_NETWORKS[blockchain]["requires_api_key"] and not api_key:
+                return jsonify({"success": False, "error": "API key required"}), 400
+
+            wallet_addresses = [w.strip() for w in data.get("wallet_addresses", "").split(",") if w.strip()]
+            if not wallet_addresses:
+                return jsonify({"success": False, "error": "At least one wallet address required"}), 400
+            validate = validate_ethereum_address if blockchain == "ethereum" else validate_bitcoin_address
+            for addr in wallet_addresses:
+                if not validate(addr):
+                    return jsonify({"success": False, "error": f"Invalid address: {addr}"}), 400
+
+            try:
+                period_start = date.fromisoformat(data.get("period_start", ""))
+                period_end = date.fromisoformat(data.get("period_end", ""))
+            except ValueError:
+                return jsonify({"success": False, "error": "Period start and end dates required"}), 400
+            if period_end < period_start:
+                return jsonify({"success": False, "error": "Period end is before period start"}), 400
+
+            settings = {
+                "time_window_hours": float(data.get("time_window_hours") or 2),
+                "invoice_tolerance_pct": str(Decimal(str(data.get("invoice_tolerance_pct") or "0.5"))),
+                "include_prices": bool(data.get("include_prices", False)),
+            }
+            inputs = fetch_inputs(blockchain, wallet_addresses, api_key, period_start, period_end)
+            recon_service.save_cache(inputs, settings)
+            return jsonify(_run_reconciliation(inputs, settings))
+
+        except (ValueError, InvalidOperation) as e:
+            return jsonify({"success": False, "error": f"Invalid input: {e}"}), 400
+        except Exception as e:
+            logger.exception("Reconciliation failed")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/reconciliation/api/rerun", methods=["POST"])
+    def rerun_reconciliation():
+        """Re-run on the cached fetch, e.g. after an override or note."""
+        cache = recon_service.load_cache()
+        if not cache:
+            return jsonify({"success": False, "error": "No previous run. Run a reconciliation first."}), 400
+        try:
+            return jsonify(_run_reconciliation(cache["inputs"], cache["settings"]))
+        except Exception as e:
+            logger.exception("Reconciliation re-run failed")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/reconciliation/api/overrides", methods=["POST"])
+    def add_reconciliation_override():
+        data = request.get_json()
+        note = (data.get("note") or "").strip()
+        if not note:
+            return jsonify({"error": "A reason is required for every manual override"}), 400
+        try:
+            override = recon_overrides.add_override(
+                metadata.get_reconciliation_state(), data.get("type", ""), data.get("fields", {}), note
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        metadata.save_reconciliation_state()
+        return jsonify({"success": True, "override": override})
+
+    @app.route("/reconciliation/api/overrides/<override_id>", methods=["DELETE"])
+    def remove_reconciliation_override(override_id: str):
+        data = request.get_json(silent=True) or {}
+        if recon_overrides.remove_override(
+            metadata.get_reconciliation_state(), override_id, (data.get("note") or "").strip()
+        ):
+            metadata.save_reconciliation_state()
+            return jsonify({"success": True})
+        return jsonify({"error": "Override not found"}), 404
+
+    @app.route("/reconciliation/api/notes", methods=["PUT"])
+    def set_exception_note():
+        data = request.get_json()
+        exception_id = (data.get("exception_id") or "").strip()
+        if not exception_id:
+            return jsonify({"error": "exception_id required"}), 400
+        recon_overrides.set_note(metadata.get_reconciliation_state(), exception_id, data.get("note", ""))
+        metadata.save_reconciliation_state()
+        return jsonify({"success": True})
+
+    @app.route("/reconciliation/api/apply-transfers", methods=["POST"])
+    def apply_transfer_classifications():
+        """Save matched transfers as TRANSFER classification overrides for the Accounting export."""
+        cache = recon_service.load_cache()
+        if not cache:
+            return jsonify({"success": False, "error": "No previous run"}), 400
+        result = _run_reconciliation(cache["inputs"], cache["settings"])
+        # Amount-and-time matches are suggestions; only confirmed pairs are applied.
+        hashes = sorted({
+            h for t in result["transfers"] if t["method"] in ("same_txid", "manual")
+            for h in (t["out_tx_hash"], t["in_tx_hash"])
+        })
+        for tx_hash in hashes:
+            metadata.set_classification_override(tx_hash, "TRANSFER")
+        if hashes:
+            recon_overrides.log_event(
+                metadata.get_reconciliation_state(),
+                "apply transfer classifications",
+                f"{len(hashes)} tx hash(es) set to TRANSFER: {', '.join(hashes)}",
+            )
+            metadata.save_reconciliation_state()
+        return jsonify({"success": True, "count": len(hashes)})
 
     # -------------------------------------------------------------------------
     # Invoice Routes

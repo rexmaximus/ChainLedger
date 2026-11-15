@@ -1,0 +1,58 @@
+CHAINLEDGER RECONCILIATION REPORT
+
+SUMMARY
+Item,Value
+Generated at (UTC),2026-11-15T23:37:43+00:00
+Own wallets,"0x1111111111111111111111111111111111111111, 0x2222222222222222222222222222222222222222"
+Transfer time window (hours),2.0
+Invoice amount tolerance (%),0.5
+Matched transfers,1
+Unmatched transfer legs,0
+Network fee expense lines,1
+Invoices checked,3
+Invoices paid,1
+Invoices partially paid,1
+Invoices unpaid,1
+Unmatched incoming payments,1
+Wallet balances checked,2
+Wallet balances reconciled (difference = 0),1
+Exceptions,4
+Active manual overrides,0
+
+MATCHED TRANSFERS
+Transfer ID,Match Method,Network,Asset,From Wallet,Outgoing Tx Hash,Sent At (UTC),Amount Sent,To Wallet,Incoming Tx Hash,Received At (UTC),Amount Received,Network Fee,Fee Asset
+TR-0001,same_txid,Ethereum,ETH,0x1111111111111111111111111111111111111111,0xmove1,2024-03-05T09:00:00+00:00,1.5,0x2222222222222222222222222222222222222222,0xmove1,2024-03-05T09:00:00+00:00,1.5,0.0021,ETH
+
+UNMATCHED TRANSFER LEGS
+Side,Date,Wallet,Tx Hash,From Address,To Address,Asset,Amount,Reason
+(none)
+
+NETWORK FEES
+Transfer ID,Date,Time,Wallet,Tx Hash,Network,Asset,Fee Amount,Fee (USD),Fee (CAD),Transaction Type,Description
+TR-0001,2024-03-05,09:00:00,0x1111111111111111111111111111111111111111,0xmove1,Ethereum,ETH,0.0021,,,EXPENSE,Network fee on own-wallet transfer
+
+INVOICE MATCHING
+Invoice Number,Invoice Date,Asset,Invoice Amount,Amount Received,Difference,Matched Status,Status In Invoice List,Match Method,Payer Verified,Payment Tx Hashes
+INV-00001,2024-03-01,ETH,2,2,0,paid,unpaid,exact_amount,yes,0xpay1
+INV-00002,2024-03-08,ETH,1,0.6,-0.4,partially paid,unpaid,payer_accumulated,yes,0xpay2a; 0xpay2b
+INV-00003,2024-03-25,ETH,0.75,0,-0.75,unpaid,unpaid,,no,
+
+UNMATCHED PAYMENTS
+Date,Wallet,Tx Hash,From Address,Asset,Amount,Reason
+2024-03-20,0x1111111111111111111111111111111111111111,0xmystery,0xdddd,ETH,0.05,No invoice matches this payment
+
+BALANCE RECONCILIATION
+Wallet,Network,Asset,Period Start,Period End,Opening Balance,Opening Source,Inflows,Outflows,Network Fees,Expected Closing,Actual Closing,Actual Source,Difference (Actual - Expected),Reconciled
+0x1111111111111111111111111111111111111111,Ethereum,ETH,2024-03-01,2024-03-31,1,sample,2.65,1.8,0.003,1.847,1.8465,sample,-0.0005,no
+0x2222222222222222222222222222222222222222,Ethereum,ETH,2024-03-01,2024-03-31,5,sample,1.5,0,0,6.5,6.5,sample,0,yes
+
+EXCEPTIONS
+Exception ID,Category,Reference,Date,Asset,Amount,Detail,Note
+payment:Ethereum:0xmystery:In:0x1111111111111111111111111111111111111111,Incoming payment not matched to an invoice,0xmystery,2024-03-20,ETH,0.05,No invoice matches this payment. From 0xdddd to wallet 0x1111111111111111111111111111111111111111,
+invoice:inv-2,Invoice partially paid,INV-00002,2024-03-08,ETH,1,"Received 0.6, difference -0.4",Client B confirmed the remaining 0.4 ETH will be sent in April
+invoice:inv-3,Invoice unpaid,INV-00003,2024-03-25,ETH,0.75,"Received 0, difference -0.75",
+balance:Ethereum:0x1111111111111111111111111111111111111111:2024-03-01:2024-03-31,Balance difference,0x1111111111111111111111111111111111111111,2024-03-31,ETH,-0.0005,Actual 1.8465 vs expected 1.847,
+
+OVERRIDE LOG
+Timestamp (UTC),Action,Override ID,Details,Note
+2026-11-15T23:37:43+00:00,note,,exception invoice:inv-2,Client B confirmed the remaining 0.4 ETH will be sent in April

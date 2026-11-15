@@ -109,6 +109,8 @@ TRANSFER and UNKNOWN transactions are excluded from all totals.
 
 Gas fees are tracked separately. For EXPENSE transactions, the gas fee is an additional cost incurred. ChainLedger displays gas fees in the export but does not include them in the main expense total (you can add them manually if your accountant requires it).
 
+The reconciliation report lists the network fee on each matched own-wallet transfer as its own expense line (`Network Fees` sheet), because the transfer itself is excluded from totals but the fee is still a cost. See [reconciliation.md](reconciliation.md).
+
 ---
 
 ## What This Is Not

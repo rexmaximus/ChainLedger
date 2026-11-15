@@ -1,4 +1,4 @@
-NOTE: Core wallet fetch and basic classification implemented. Advanced exchange/transfer handling coming soon.
+NOTE: Wallet fetching, classification, exports, invoices and a first reconciliation layer (own-wallet transfer matching, invoice-to-payment matching, native ETH/BTC balance checks) are implemented. Exchange CSV import and bank or QuickBooks/Xero ledger import are not.
 
 # ChainLedger
 
@@ -46,6 +46,15 @@ Generate CSV or Excel files with:
 ### 5. Professional Invoices
 Create PDF invoices for your crypto payments with auto-generated invoice numbers and optional fiat equivalents.
 
+### 6. Reconciliation
+Check your on-chain records against themselves and against your ChainLedger invoices:
+- **Own-wallet transfers**: pair the outgoing and incoming sides of a move between your wallets, mark both as TRANSFER, and record the network fee as its own expense line
+- **Invoice payments**: match incoming payments to invoices as paid, partially paid, overpaid or unpaid; unmatched payments go on an exceptions list
+- **Wallet balances**: opening balance + transactions − fees compared with the actual closing balance from the chain (native ETH/BTC only)
+- **Report**: Excel and CSV with matched and unmatched items, differences, a note per exception, and a timestamped log of manual overrides
+
+See [Reconciliation](docs/reconciliation.md) for the rules and what is not covered.
+
 ---
 
 ## What ChainLedger does NOT do
@@ -76,13 +85,7 @@ pip install -r requirements.txt
 
 ### Configuration
 
-Copy the example environment file and add your API keys:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` with your Alchemy API key (for Ethereum). Bitcoin uses a public API and requires no key.
+Ethereum needs an Alchemy API key, entered in the form on the Accounting or Reconciliation page. Bitcoin uses Blockstream's public API and needs no key.
 
 ### Run
 
@@ -91,6 +94,13 @@ python src/ui/app.py
 ```
 
 Open **http://127.0.0.1:5000** in your browser.
+
+### Tests
+
+```bash
+pip install pytest
+python -m pytest
+```
 
 ---
 
@@ -103,7 +113,13 @@ Open **http://127.0.0.1:5000** in your browser.
 | **Fiat Valuation** | Historical USD/CAD values via CoinGecko |
 | **Excel/CSV Export** | Accountant-ready spreadsheets with summaries |
 | **PDF Invoices** | Professional invoices with auto-numbering |
+| **Own-Wallet Transfer Matching** | Pairs outgoing/incoming rows between your wallets (same txid, or amount and time window); fee recorded as a separate expense line |
+| **Invoice-to-Payment Matching** | Paid / partially paid / overpaid / unpaid per invoice; unmatched payments listed as exceptions |
+| **Balance Reconciliation** | Expected vs actual closing balance per wallet for native ETH (historical, via Alchemy) and BTC (current balance, or a manually entered one) |
+| **Reconciliation Report** | Excel/CSV report with exception notes and a timestamped override log |
 | **Local Storage** | All data stored in local JSON files |
+
+Not implemented yet: exchange CSV import, bank statement import, QuickBooks/Xero ledger import, ERC-20 token balance reconciliation.
 
 ---
 
@@ -122,7 +138,9 @@ ChainLedger/
 │   ├── classification/   # Transaction classification logic
 │   ├── exports/          # CSV/Excel report generation
 │   ├── invoices/         # PDF invoice generation
+│   ├── reconciliation/   # Transfer, invoice and balance reconciliation
 │   └── ui/               # Flask web interface
+├── tests/                # Unit tests (pytest)
 ├── docs/                 # Documentation
 ├── examples/             # Sample outputs
 └── data/                 # Local storage (created on first run)
@@ -134,6 +152,7 @@ ChainLedger/
 
 - [Accounting Notes](docs/accounting-notes.md): Why the accounting logic works the way it does
 - [Design Decisions](docs/design-decisions.md): Key architectural choices
+- [Reconciliation](docs/reconciliation.md): How transfers, invoice payments and balances are reconciled
 - [Limitations](docs/limitations.md): What this tool explicitly does not handle
 
 ---
