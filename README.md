@@ -67,7 +67,7 @@ Create PDF invoices for your crypto payments with auto-generated invoice numbers
 ### Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/ChainLedger.git
+git clone https://github.com/rexmaximus/ChainLedger.git
 cd ChainLedger
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
