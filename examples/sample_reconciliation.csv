@@ -2,7 +2,7 @@ CHAINLEDGER RECONCILIATION REPORT
 
 SUMMARY
 Item,Value
-Generated at (UTC),2026-11-16T00:20:36+00:00
+Generated at (UTC),2026-11-16T01:18:20+00:00
 Own wallets,"0x1111111111111111111111111111111111111111, 0x2222222222222222222222222222222222222222"
 Transfer time window (hours),2.0
 Invoice amount tolerance (%),0.5
@@ -66,11 +66,11 @@ Wallet,Network,Asset,Period Start,Period End,Opening Balance,Opening Source,Infl
 
 EXCEPTIONS
 Exception ID,Category,Reference,Date,Asset,Amount,Detail,Note
-payment:Ethereum:0xmystery:In:0x1111111111111111111111111111111111111111,Incoming payment not matched to an invoice,0xmystery,2024-03-20,ETH,0.05,No invoice matches this payment. From 0xdddd to wallet 0x1111111111111111111111111111111111111111,
+payment:Ethereum:0xmystery:In:0x1111111111111111111111111111111111111111:ETH,Incoming payment not matched to an invoice,0xmystery,2024-03-20,ETH,0.05,No invoice matches this payment. From 0xdddd to wallet 0x1111111111111111111111111111111111111111,
 invoice:inv-2,Invoice partially paid,INV-00002,2024-03-08,ETH,1,"Received 0.6, difference -0.4",Client B confirmed the remaining 0.4 ETH will be sent in April
 invoice:inv-3,Invoice unpaid,INV-00003,2024-03-25,ETH,0.75,"Received 0, difference -0.75",
-balance:Ethereum:0x1111111111111111111111111111111111111111:2024-03-01:2024-03-31,Balance difference,0x1111111111111111111111111111111111111111,2024-03-31,ETH,-0.0005,Actual 1.8465 vs expected 1.847,
+balance:Ethereum:0x1111111111111111111111111111111111111111:ETH:2024-03-01:2024-03-31,Balance difference,0x1111111111111111111111111111111111111111,2024-03-31,ETH,-0.0005,Actual 1.8465 vs expected 1.847,
 
 OVERRIDE LOG
 Timestamp (UTC),Action,Override ID,Details,Note
-2026-11-16T00:20:36+00:00,note,,exception invoice:inv-2,Client B confirmed the remaining 0.4 ETH will be sent in April
+2026-11-16T01:18:20+00:00,note,,exception invoice:inv-2,Client B confirmed the remaining 0.4 ETH will be sent in April

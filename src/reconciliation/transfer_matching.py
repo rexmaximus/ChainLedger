@@ -8,7 +8,7 @@ and income on the other.
 Matching rules, applied in this order:
 1. Manual links (from the override log) are applied first, as given.
 2. Same txid: an outgoing row and an incoming row on the same network share a
-   transaction hash, and the wallets differ. This is the normal case on-chain.
+   transaction hash and asset, and the wallets differ. This is the normal case on-chain.
 3. Amount and time: same network and asset, different txids, the incoming row
    is confirmed within `time_window` after the outgoing row, and the amount
    received equals the amount sent, or the amount sent minus the recorded
@@ -190,14 +190,14 @@ def match_own_transfers(
         return rid not in used and rid not in excluded
 
     # 2. Same txid
-    by_hash: dict[tuple[str, str], list[str]] = {}
+    by_hash: dict[tuple[str, str, str], list[str]] = {}
     for rid, tx in incoming.items():
-        by_hash.setdefault((tx.get("network", ""), tx.get("tx_hash", "")), []).append(rid)
+        by_hash.setdefault((tx.get("network", ""), tx.get("tx_hash", ""), tx.get("asset", "")), []).append(rid)
 
     for out_id, out_tx in sorted(outgoing.items(), key=lambda kv: tx_datetime(kv[1])):
         if not available(out_id):
             continue
-        key = (out_tx.get("network", ""), out_tx.get("tx_hash", ""))
+        key = (out_tx.get("network", ""), out_tx.get("tx_hash", ""), out_tx.get("asset", ""))
         candidates = [
             rid for rid in by_hash.get(key, [])
             if available(rid)

@@ -116,7 +116,7 @@ Once a transaction is fetched and enriched with prices, those prices are based o
 
 ## Limited Token Support
 
-- **Fetching:** only native ETH transfers on Ethereum and BTC on Bitcoin. ERC-20 token transfers (USDC, USDT, DAI, etc.) are not fetched yet, so payments in those tokens do not appear in exports or reconciliation.
+- **Fetching:** ETH and nine ERC-20 tokens (USDC, USDT, DAI, WETH, WBTC, LINK, UNI, AAVE, MATIC) on Ethereum mainnet, and BTC on Bitcoin. Tokens are identified by contract address; any other token, including look-alikes using the same symbol, is not fetched, so payments in it do not appear in exports or reconciliation.
 - **Prices:** historical USD/CAD prices are looked up for ETH, BTC, USDC, USDT, DAI, WETH, WBTC, MATIC, LINK, UNI and AAVE. Any other symbol is valued at $1.00, and a failed price lookup gives $0. Check these values manually.
 
 ---
@@ -141,7 +141,7 @@ The reconciliation layer compares on-chain data with client CSV/Excel files, wit
 - Read PDF files
 - Connect to QuickBooks, Xero or any other ledger, or post entries to one (CSV exports can be uploaded)
 - Reconcile exchange account balances (only the deposit and withdrawal lines in an exchange history)
-- Reconcile ERC-20 token balances (only native ETH and BTC)
+- Reconcile balances of tokens outside the nine supported ERC-20 tokens
 - Fetch historical Bitcoin balances (Blockstream only reports the current balance; past balances must be entered manually)
 
 Amount-and-time transfer matches are heuristics and are flagged for review. See [reconciliation.md](reconciliation.md).

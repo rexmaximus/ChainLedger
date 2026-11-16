@@ -31,14 +31,16 @@ def row_id(tx: dict) -> str:
     """
     Stable identifier for one side of a transaction.
 
-    The same tx hash can appear twice (an outgoing row in one of your wallets and
-    an incoming row in another), so the id includes direction and wallet.
+    The same tx hash can appear several times (an outgoing row in one of your
+    wallets and an incoming row in another, or an ETH row and a token row), so
+    the id includes direction, wallet and asset.
     """
     return ":".join([
         tx.get("network", ""),
         tx.get("tx_hash", ""),
         tx.get("direction", ""),
         (tx.get("wallet_address") or "").lower(),
+        tx.get("asset", ""),
     ])
 
 

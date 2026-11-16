@@ -110,18 +110,18 @@ expected closing = opening balance + incoming − outgoing − network fees paid
 difference       = actual closing − expected closing
 ```
 
-Only the network's native asset is reconciled (ETH or BTC).
+Assets reconciled: ETH and BTC, and on Ethereum each supported ERC-20 token (USDC, USDT, DAI, WETH, WBTC, LINK, UNI, AAVE, MATIC) that the wallet held or moved in the period. Network fees are paid in ETH, so they are subtracted only from the ETH balance.
 
 | Balance | Ethereum | Bitcoin |
 |---------|----------|---------|
-| Opening (start of period) | `eth_getBalance` at the last block before the period starts (Alchemy) | Not available from Blockstream; enter it manually |
-| Actual closing (end of period) | `eth_getBalance` at the last block of the end date | Current balance if the period ends today or later; otherwise enter it manually |
+| Opening (start of period) | `eth_getBalance` (ETH) or the token's `balanceOf` (ERC-20) at the last block before the period starts (Alchemy) | Not available from Blockstream; enter it manually |
+| Actual closing (end of period) | `eth_getBalance` / `balanceOf` at the last block of the end date | Current balance if the period ends today or later; otherwise enter it manually |
 
 A manual balance is entered with **Enter opening** / **Enter closing** and requires a source note. It is logged like any other override.
 
 A non-zero difference means the fetched transactions do not explain the balance change. Common causes:
 
-- token transfers or contract calls that the fetcher does not return (it fetches ETH transfers only, not ERC-20 transfers)
+- token transfers or contract calls that the fetcher does not return (unsupported tokens, or gas paid on transactions that moved no supported asset, such as token approvals)
 - fees that could not be looked up
 - failed transactions that still paid gas
 - a wrong manual balance
@@ -156,7 +156,8 @@ The last fetch is cached in `data/reconciliation/last_run.json`, so **Re-run las
 
 ## Fetcher changes made for reconciliation
 
-- **Ethereum:** the fee on outgoing external transactions is now looked up from the transaction receipt (`gasUsed × effectiveGasPrice`). It used to be recorded as 0. Transfer results are now paginated.
+- **Ethereum:** the gas fee is now looked up from the transaction receipt (`gasUsed × effectiveGasPrice`). It used to be recorded as 0. It is recorded once per transaction, on an outgoing row, and only when the wallet sent the transaction. Transfer results are paginated.
+- **ERC-20 tokens:** transfers of USDC, USDT, DAI, WETH, WBTC, LINK, UNI, AAVE and MATIC are fetched, identified by contract address. Several transfers of the same token in the same direction within one transaction are combined into one row. Same-txid transfer matching and client-record hash matching also require the same asset, because one transaction can move ETH and a token.
 - **Bitcoin:** the full confirmed history is fetched (previously only the first page of 25). For outgoing transactions the amount now excludes the miner fee. The fee was previously counted inside the amount and again in the fee column.
 
 ---
@@ -167,6 +168,6 @@ The last fetch is cached in `data/reconciliation/last_run.json`, so **Re-run las
 - PDF files of any kind
 - Direct QuickBooks / Xero connections, preset formats for them or for specific exchanges, or posting entries to a ledger (their CSV exports can be uploaded with column mapping)
 - Fiat amounts in client files (lines are compared in crypto units)
-- ERC-20 token balances (only native ETH/BTC balances are reconciled)
+- Tokens outside the nine supported ERC-20 tokens, and chains other than Ethereum mainnet and Bitcoin
 - Fiat (USD/CAD) balance reconciliation; balances are compared in crypto units
 - Assigning one Bitcoin fee when several of your wallets fund the same transaction (each wallet's row shows the whole fee)

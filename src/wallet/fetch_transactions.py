@@ -130,13 +130,26 @@ class BlockchainFetcher(ABC):
 # =============================================================================
 
 class EthereumFetcher(BlockchainFetcher):
-    """Fetch Ethereum transactions via Alchemy API."""
+    """
+    Fetch Ethereum transactions via Alchemy API.
 
-    # Common ERC-20 token decimals
-    TOKEN_DECIMALS = {
-        "USDC": 6, "USDT": 6, "WBTC": 8,
-        "DAI": 18, "LINK": 18, "UNI": 18, "AAVE": 18,
-        "WETH": 18, "MATIC": 18, "CRV": 18, "MKR": 18,
+    Fetches native ETH transfers (external and internal) and ERC-20 transfers of
+    the tokens in SUPPORTED_TOKENS only. Tokens are identified by contract
+    address, never by symbol, so look-alike tokens (a fake "USDC") and spam
+    airdrops are ignored.
+    """
+
+    # Ethereum mainnet contract address -> (symbol, decimals)
+    SUPPORTED_TOKENS = {
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": ("USDC", 6),
+        "0xdac17f958d2ee523a2206206994597c13d831ec7": ("USDT", 6),
+        "0x6b175474e89094c44da98b954eedeac495271d0f": ("DAI", 18),
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": ("WETH", 18),
+        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": ("WBTC", 8),
+        "0x514910771af9ca656af840dff83e8264ecf986ca": ("LINK", 18),
+        "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": ("UNI", 18),
+        "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": ("AAVE", 18),
+        "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0": ("MATIC", 18),
     }
 
     def __init__(self, api_key: str):
@@ -144,6 +157,8 @@ class EthereumFetcher(BlockchainFetcher):
         self.api_key = api_key
         self.base_url = f"https://eth-mainnet.g.alchemy.com/v2/{api_key}"
         self.client = httpx.Client(timeout=30.0)
+        self._block_cache: dict[int, datetime] = {}
+        self._receipt_cache: dict[str, dict] = {}
 
     def _rpc_call(self, method: str, params: list) -> dict:
         """Make a JSON-RPC call to Alchemy."""
@@ -158,10 +173,13 @@ class EthereumFetcher(BlockchainFetcher):
         return result.get("result", {})
 
     def _get_block_timestamp(self, block_hex: str) -> datetime:
-        """Get timestamp for a block."""
-        block = self._rpc_call("eth_getBlockByNumber", [block_hex, False])
-        ts = int(block.get("timestamp", "0x0"), 16)
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
+        """Get timestamp for a block (cached)."""
+        number = int(block_hex, 16)
+        if number not in self._block_cache:
+            block = self._rpc_call("eth_getBlockByNumber", [block_hex, False])
+            ts = int(block.get("timestamp", "0x0"), 16)
+            self._block_cache[number] = datetime.fromtimestamp(ts, tz=timezone.utc)
+        return self._block_cache[number]
 
     def _parse_eth_value(self, hex_value: str) -> Decimal:
         """Convert hex wei to ETH."""
@@ -179,12 +197,24 @@ class EthereumFetcher(BlockchainFetcher):
                 break
             page_params["pageKey"] = page_key
 
-    def _get_tx_fee(self, tx_hash: str) -> Decimal:
-        """Gas fee paid for a transaction, in ETH (gasUsed x effectiveGasPrice)."""
+    def _get_receipt(self, tx_hash: str) -> dict:
+        if tx_hash not in self._receipt_cache:
+            self._receipt_cache[tx_hash] = self._rpc_call("eth_getTransactionReceipt", [tx_hash]) or {}
+        return self._receipt_cache[tx_hash]
+
+    def _get_tx_fee(self, tx_hash: str, payer: Optional[str] = None) -> Decimal:
+        """
+        Gas fee of a transaction in ETH (gasUsed x effectiveGasPrice).
+
+        If `payer` is given, returns 0 unless that address sent the transaction,
+        since only the sender pays gas (e.g. tokens pulled by a contract).
+        """
         if not tx_hash:
             return Decimal(0)
         try:
-            receipt = self._rpc_call("eth_getTransactionReceipt", [tx_hash])
+            receipt = self._get_receipt(tx_hash)
+            if payer and (receipt.get("from") or "").lower() != payer.lower():
+                return Decimal(0)
             gas_used = int(receipt.get("gasUsed", "0x0"), 16)
             gas_price = int(receipt.get("effectiveGasPrice", "0x0"), 16)
             return Decimal(gas_used * gas_price) / Decimal(10 ** 18)
@@ -218,17 +248,31 @@ class EthereumFetcher(BlockchainFetcher):
         wei = int(self._rpc_call("eth_getBalance", [wallet_address, block_tag]), 16)
         return Decimal(wei) / Decimal(10 ** 18)
 
-    def _get_token_symbol(self, contract_address: str) -> str:
-        """Get token symbol from contract (simplified lookup)."""
-        # Common token addresses
-        known_tokens = {
-            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
-            "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT",
-            "0x6b175474e89094c44da98b954eedeac495271d0f": "DAI",
-            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "WETH",
-            "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": "WBTC",
-        }
-        return known_tokens.get(contract_address.lower(), "ERC20")
+    def get_token_balance(self, wallet_address: str, symbol: str, as_of: Optional[datetime] = None) -> Decimal:
+        """Balance of a supported ERC-20 token via balanceOf (eth_call) at a date."""
+        contract = next((a for a, (sym, _) in self.SUPPORTED_TOKENS.items() if sym == symbol), None)
+        if contract is None:
+            raise ValueError(f"Unsupported token: {symbol}")
+        decimals = self.SUPPORTED_TOKENS[contract][1]
+        block_tag = "latest" if as_of is None else hex(self._find_block_at(as_of))
+        data = "0x70a08231" + wallet_address.lower().replace("0x", "").rjust(64, "0")
+        raw = self._rpc_call("eth_call", [{"to": contract, "data": data}, block_tag])
+        return Decimal(int(raw or "0x0", 16)) / Decimal(10 ** decimals)
+
+    def supported_token_symbols(self) -> list[str]:
+        return [sym for sym, _ in self.SUPPORTED_TOKENS.values()]
+
+    def _transfer_datetime(self, tx: dict) -> datetime:
+        stamp = (tx.get("metadata") or {}).get("blockTimestamp")
+        if stamp:
+            return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return self._get_block_timestamp(tx.get("blockNum", "0x0"))
+
+    def _token_amount(self, tx: dict, decimals: int) -> Decimal:
+        raw = (tx.get("rawContract") or {}).get("value")
+        if raw:
+            return Decimal(int(raw, 16)) / Decimal(10 ** decimals)
+        return Decimal(str(tx.get("value") or 0))
 
     def fetch_transactions(
         self,
@@ -236,74 +280,103 @@ class EthereumFetcher(BlockchainFetcher):
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
     ) -> list[LedgerRow]:
-        """Fetch all transactions for a wallet."""
-        rows = []
+        """
+        Fetch ETH and supported ERC-20 transfers for a wallet.
+
+        Several transfers of the same asset in the same direction within one
+        transaction are combined into one row. The gas fee is put on one
+        outgoing row per transaction, and only if this wallet sent it.
+        """
         wallet_lower = wallet_address.lower()
+        queries = [
+            {"category": ["external", "internal"]},
+            {"category": ["erc20"], "contractAddresses": list(self.SUPPORTED_TOKENS)},
+        ]
+        combined: dict[tuple, dict] = {}
+        seen_ids: set = set()
 
-        # Fetch ETH transfers
-        for direction in ["from", "to"]:
-            params = {
-                "fromBlock": "0x0",
-                "toBlock": "latest",
-                direction: wallet_address,
-                "category": ["external", "internal"],
-            }
+        for query in queries:
+            for direction_key in ("fromAddress", "toAddress"):
+                params = {
+                    "fromBlock": "0x0",
+                    "toBlock": "latest",
+                    direction_key: wallet_address,
+                    "withMetadata": True,
+                    "excludeZeroValue": True,
+                    **query,
+                }
+                for tx in self._iter_asset_transfers(params):
+                    try:
+                        unique = tx.get("uniqueId") or (tx.get("hash"), tx.get("from"), tx.get("to"),
+                                                        tx.get("category"), str(tx.get("value")))
+                        if unique in seen_ids:
+                            continue  # self-transfers show up in both queries
+                        seen_ids.add(unique)
 
-            for tx in self._iter_asset_transfers(params):
-                try:
-                    block_num = int(tx.get("blockNum", "0x0"), 16)
-                    block_hex = tx.get("blockNum", "0x0")
-                    block_dt = self._get_block_timestamp(block_hex)
+                        if tx.get("category") == "erc20":
+                            contract = ((tx.get("rawContract") or {}).get("address") or "").lower()
+                            if contract not in self.SUPPORTED_TOKENS:
+                                continue
+                            asset, decimals = self.SUPPORTED_TOKENS[contract]
+                            amount = self._token_amount(tx, decimals)
+                        else:
+                            asset = "ETH"
+                            amount = Decimal(str(tx.get("value") or 0))
+                        if amount == 0:
+                            continue
 
-                    # Date filtering
-                    if from_date and block_dt < from_date:
+                        block_dt = self._transfer_datetime(tx)
+                        if from_date and block_dt < from_date:
+                            continue
+                        if to_date and block_dt > to_date:
+                            continue
+
+                        is_incoming = (tx.get("to") or "").lower() == wallet_lower
+                        direction = "In" if is_incoming else "Out"
+                        key = (tx.get("hash", ""), direction, asset)
+                        entry = combined.setdefault(key, {
+                            "tx": tx, "dt": block_dt, "amount": Decimal(0), "asset": asset,
+                            "direction": direction, "count": 0,
+                        })
+                        entry["amount"] += amount
+                        entry["count"] += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to parse transaction: {e}")
                         continue
-                    if to_date and block_dt > to_date:
-                        continue
 
-                    from_addr = tx.get("from", "").lower()
-                    to_addr = tx.get("to", "").lower()
-                    is_incoming = to_addr == wallet_lower
-                    value = Decimal(str(tx.get("value", 0)))
+        rows = []
+        fee_assigned: set[str] = set()
+        # Native ETH rows first so the fee lands on the ETH row when a tx has both
+        for (tx_hash, direction, asset), entry in sorted(
+            combined.items(), key=lambda kv: (kv[1]["dt"], kv[0][2] != "ETH")
+        ):
+            tx = entry["tx"]
+            fee = Decimal(0)
+            if direction == "Out" and tx_hash not in fee_assigned:
+                fee = self._get_tx_fee(tx_hash, payer=wallet_address)
+                fee_assigned.add(tx_hash)
+            is_incoming = direction == "In"
+            decimals = 18 if asset == "ETH" else next(
+                d for sym, d in self.SUPPORTED_TOKENS.values() if sym == asset)
+            rows.append(LedgerRow(
+                tx_hash=tx_hash,
+                block_number=int(tx.get("blockNum", "0x0"), 16),
+                block_date=entry["dt"].strftime("%Y-%m-%d"),
+                block_time=entry["dt"].strftime("%H:%M:%S"),
+                from_address=tx.get("from", "") or "",
+                to_address=tx.get("to", "") or "",
+                direction=direction,
+                network="Ethereum",
+                asset=asset,
+                amount_raw=str(int(entry["amount"] * (10 ** decimals))),
+                amount_decimal=str(entry["amount"]),
+                tx_fee_native=str(fee),
+                tx_status="Success",
+                category="Incoming Transfer" if is_incoming else "Outgoing Transfer",
+                notes=f"{entry['count']} transfers combined" if entry["count"] > 1 else "",
+            ))
 
-                    row = LedgerRow(
-                        tx_hash=tx.get("hash", ""),
-                        block_number=block_num,
-                        block_date=block_dt.strftime("%Y-%m-%d"),
-                        block_time=block_dt.strftime("%H:%M:%S"),
-                        from_address=tx.get("from", ""),
-                        to_address=tx.get("to", ""),
-                        direction="In" if is_incoming else "Out",
-                        network="Ethereum",
-                        asset=tx.get("asset", "ETH"),
-                        amount_raw=str(int(value * 10**18)),
-                        amount_decimal=str(value),
-                        # Gas is paid by the sender of an external transaction.
-                        tx_fee_native=(
-                            str(self._get_tx_fee(tx.get("hash", "")))
-                            if not is_incoming and tx.get("category") == "external"
-                            else "0"
-                        ),
-                        tx_status="Success",
-                        category="Incoming Transfer" if is_incoming else "Outgoing Transfer",
-                        notes="",
-                    )
-                    rows.append(row)
-
-                except Exception as e:
-                    logger.warning(f"Failed to parse transaction: {e}")
-                    continue
-
-        # Deduplicate by tx_hash + direction
-        seen = set()
-        unique_rows = []
-        for row in rows:
-            key = (row.tx_hash, row.direction)
-            if key not in seen:
-                seen.add(key)
-                unique_rows.append(row)
-
-        return sorted(unique_rows, key=lambda r: (r.block_date, r.block_time))
+        return sorted(rows, key=lambda r: (r.block_date, r.block_time))
 
     def close(self) -> None:
         """Close HTTP client."""

@@ -28,7 +28,7 @@ from typing import Optional
 
 from . import overrides as ov
 from .balance import BalanceReconciliation, reconcile_balance
-from .common import fmt_amount, parse_date, row_id, to_decimal, utc_now_iso
+from .common import NATIVE_ASSET, fmt_amount, parse_date, row_id, to_decimal, utc_now_iso
 from .invoice_matching import PAID, InvoiceMatchResult, match_invoices_to_payments
 from .record_matching import RecordMatchResult, match_client_records
 from .transfer_matching import TransferMatchResult, match_own_transfers
@@ -220,8 +220,9 @@ def build_report(
         start, end = parse_date(spec["period_start"]), parse_date(spec["period_end"])
         opening, opening_src = spec.get("opening_balance"), spec.get("opening_source", "")
         closing, closing_src = spec.get("actual_closing"), spec.get("actual_source", "")
-        manual_open = ov.manual_balance(state, "opening", spec["wallet_address"], start.isoformat())
-        manual_close = ov.manual_balance(state, "closing", spec["wallet_address"], end.isoformat())
+        asset = spec.get("asset") or NATIVE_ASSET.get(spec["network"], "")
+        manual_open = ov.manual_balance(state, "opening", spec["wallet_address"], start.isoformat(), asset)
+        manual_close = ov.manual_balance(state, "closing", spec["wallet_address"], end.isoformat(), asset)
         if manual_open is not None:
             opening, opening_src = manual_open, "manual entry (see override log)"
         if manual_close is not None:
@@ -236,6 +237,7 @@ def build_report(
             actual_closing=None if closing is None else to_decimal(closing),
             opening_source=opening_src,
             actual_source=closing_src,
+            asset=asset,
         ))
 
     report = ReconciliationReport(
@@ -311,7 +313,7 @@ def _collect_exceptions(report: ReconciliationReport, state: dict) -> list[Excep
             f"{'Received in' if tx.get('direction') == 'In' else 'Sent from'} wallet {tx.get('wallet_address', '')}")
 
     for b in report.balances:
-        eid = f"balance:{b.network}:{b.wallet_address.lower()}:{b.period_start}:{b.period_end}"
+        eid = f"balance:{b.network}:{b.wallet_address.lower()}:{b.asset}:{b.period_start}:{b.period_end}"
         if b.difference is None:
             missing = [n for n, v in (("opening", b.opening_balance), ("closing", b.actual_closing)) if v is None]
             add(eid, "Balance not reconciled (balance unavailable)", b.wallet_address, b.period_end,

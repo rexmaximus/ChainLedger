@@ -1,12 +1,12 @@
 """
 Wallet Balance Reconciliation
 
-For one wallet, one native asset and one period:
+For one wallet, one asset and one period:
 
     expected closing = opening balance
                        + incoming amounts
                        - outgoing amounts
-                       - network fees paid
+                       - network fees paid (only when the asset is ETH or BTC)
     difference       = actual closing - expected closing
 
 The opening and actual closing balances come from the chain API where the API
@@ -17,8 +17,9 @@ balance movement. Common causes: token transfers or contract calls the fetcher
 does not return, fees that could not be looked up, failed transactions that
 still paid gas, or a wrong manual balance.
 
-Only the network's native asset (ETH or BTC) is reconciled. Outgoing amounts
-are assumed to exclude the fee, which the fee column records separately.
+Assets: the network's native asset (ETH or BTC), and on Ethereum the supported
+ERC-20 tokens. Outgoing amounts are assumed to exclude the fee, which the fee
+column records separately; fees are paid in ETH, so token balances exclude them.
 """
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ def reconcile_balance(
     actual_closing: Optional[Decimal],
     opening_source: str = "",
     actual_source: str = "",
+    asset: Optional[str] = None,
 ) -> BalanceReconciliation:
     """
     Reconcile a wallet's native-asset balance over a period.
@@ -71,6 +73,7 @@ def reconcile_balance(
     Args:
         wallet_address: The wallet being reconciled
         network: "Ethereum" or "Bitcoin"
+        asset: Asset to reconcile; defaults to the network's native asset
         transactions: Rows for this wallet (other wallets' rows are ignored)
         period_start / period_end: Inclusive date range (UTC)
         opening_balance: Balance at the start of period_start, or None if unknown
@@ -81,7 +84,8 @@ def reconcile_balance(
         BalanceReconciliation; expected closing and difference are None when an
         input balance is missing.
     """
-    asset = NATIVE_ASSET.get(network, "")
+    native = NATIVE_ASSET.get(network, "")
+    asset = asset or native
     wallet = wallet_address.lower()
     inflows = outflows = fees = Decimal(0)
     count = 0
@@ -104,7 +108,7 @@ def reconcile_balance(
             elif tx.get("direction") == "Out":
                 outflows += amount
                 counted = True
-        if tx.get("direction") == "Out":
+        if asset == native and tx.get("direction") == "Out":
             fee = to_decimal(tx.get("tx_fee_native"))
             if fee:
                 fees += fee

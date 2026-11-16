@@ -79,6 +79,8 @@ def fetch_inputs(
                 spec["actual_closing"] = None
                 spec["actual_source"] = f"unavailable: {e}"
             balances.append(spec)
+            if network == "ethereum":
+                balances.extend(_token_balance_specs(generator.fetcher, address, rows, spec, start_dt, end_dt, now))
         finally:
             generator.close()
 
@@ -91,6 +93,34 @@ def fetch_inputs(
         "transactions": transactions,
         "balances": balances,
     }
+
+
+def _token_balance_specs(fetcher, address, rows, base_spec, start_dt, end_dt, now) -> list[dict]:
+    """
+    Balance specs for each supported ERC-20 token the wallet held or moved.
+
+    Tokens with a zero opening and closing balance and no activity are skipped.
+    """
+    moved = {r.asset for r in rows}
+    specs = []
+    for symbol in fetcher.supported_token_symbols():
+        spec = {**base_spec, "asset": symbol}
+        try:
+            opening = fetcher.get_token_balance(address, symbol, start_dt - timedelta(seconds=1))
+            spec["opening_balance"], spec["opening_source"] = fmt_amount(opening), "chain API (balanceOf)"
+        except Exception as e:
+            opening = None
+            spec["opening_balance"], spec["opening_source"] = None, f"unavailable: {e}"
+        try:
+            closing = fetcher.get_token_balance(address, symbol, None if end_dt >= now else end_dt)
+            spec["actual_closing"] = fmt_amount(closing)
+            spec["actual_source"] = "chain API (balanceOf, current)" if end_dt >= now else "chain API (balanceOf)"
+        except Exception as e:
+            closing = None
+            spec["actual_closing"], spec["actual_source"] = None, f"unavailable: {e}"
+        if symbol in moved or opening or closing:
+            specs.append(spec)
+    return specs
 
 
 def add_fee_fiat_values(report: ReconciliationReport) -> None:

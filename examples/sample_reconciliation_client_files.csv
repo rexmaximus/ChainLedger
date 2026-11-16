@@ -2,7 +2,7 @@ CHAINLEDGER RECONCILIATION REPORT
 
 SUMMARY
 Item,Value
-Generated at (UTC),2026-11-16T00:20:36+00:00
+Generated at (UTC),2026-11-16T01:18:20+00:00
 Own wallets,"0x1111111111111111111111111111111111111111, 0x2222222222222222222222222222222222222222"
 Transfer time window (hours),2.0
 Invoice amount tolerance (%),0.5
@@ -77,9 +77,9 @@ invoice:file:ar1:4,Invoice unpaid,INV-C-103,2024-03-25,ETH,0.75,"Received 0, dif
 client_record:ledger1:7,Client ledger line not matched on-chain,JE-1006,2024-03-28,ETH,0.1,"Not found on-chain. File client_ledger.csv, line 7: Software subscription",
 client_record:ex1:4,Client exchange line not matched on-chain,line 4,2024-03-29,ETH,1.0,"Not found on-chain. File exchange_history.csv, line 4",
 client_amount:ledger1:5,Client record amount differs from chain,0xvendor,2024-03-15,ETH,-0.01,Client 0.31 vs chain 0.3,"Asked client: contractor invoice was 0.31 ETH, only 0.30 ETH paid on-chain"
-not_in_ledger:Ethereum:0xpay2b:In:0x1111111111111111111111111111111111111111,On-chain transaction missing from client ledger,0xpay2b,2024-03-12,ETH,0.2,Received in wallet 0x1111111111111111111111111111111111111111,
-balance:Ethereum:0x1111111111111111111111111111111111111111:2024-03-01:2024-03-31,Balance difference,0x1111111111111111111111111111111111111111,2024-03-31,ETH,-0.0005,Actual 1.8465 vs expected 1.847,
+not_in_ledger:Ethereum:0xpay2b:In:0x1111111111111111111111111111111111111111:ETH,On-chain transaction missing from client ledger,0xpay2b,2024-03-12,ETH,0.2,Received in wallet 0x1111111111111111111111111111111111111111,
+balance:Ethereum:0x1111111111111111111111111111111111111111:ETH:2024-03-01:2024-03-31,Balance difference,0x1111111111111111111111111111111111111111,2024-03-31,ETH,-0.0005,Actual 1.8465 vs expected 1.847,
 
 OVERRIDE LOG
 Timestamp (UTC),Action,Override ID,Details,Note
-2026-11-16T00:20:36+00:00,note,,exception client_amount:ledger1:5,"Asked client: contractor invoice was 0.31 ETH, only 0.30 ETH paid on-chain"
+2026-11-16T01:18:20+00:00,note,,exception client_amount:ledger1:5,"Asked client: contractor invoice was 0.31 ETH, only 0.30 ETH paid on-chain"

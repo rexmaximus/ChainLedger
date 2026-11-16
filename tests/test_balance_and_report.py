@@ -69,7 +69,7 @@ def test_manual_override_and_note_flow_through_report():
     mystery = row_id(next(t for t in txs if t["tx_hash"] == "0xmystery"))
     state = ov.empty_state()
     ov.add_override(state, "match_invoice", {"invoice_id": "inv-3", "row_id": mystery}, note="client paid in part")
-    ov.add_override(state, "closing_balance", {"wallet_address": HOT, "date": "2024-03-31", "amount": "1.847"},
+    ov.add_override(state, "closing_balance", {"wallet_address": HOT, "asset": "ETH", "date": "2024-03-31", "amount": "1.847"},
                     note="balance per explorer")
     ov.set_note(state, "invoice:inv-3", "chasing remaining 0.70 ETH")
     report = build_report(txs, [HOT, COLD], sample_invoices(), sample_balances(), state=state)

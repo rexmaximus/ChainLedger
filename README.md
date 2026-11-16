@@ -1,4 +1,4 @@
-NOTE: Implemented: wallet fetching, classification, exports, a reconciliation layer (client CSV/Excel files, own-wallet transfers and invoice payments matched to on-chain data, native ETH/BTC balance checks) and freelancer invoicing. Not implemented yet: bank statement reconciliation, PDF import, direct QuickBooks/Xero connections, ERC-20 balance checks.
+NOTE: Implemented: wallet fetching, classification, exports, a reconciliation layer (client CSV/Excel files, own-wallet transfers and invoice payments matched to on-chain data, ETH, BTC and supported ERC-20 token balance checks) and freelancer invoicing. Not implemented yet: bank statement reconciliation, PDF import, direct QuickBooks/Xero connections, tokens outside the supported list.
 
 # ChainLedger
 
@@ -17,7 +17,7 @@ ChainLedger is a simple, local-only tool for checking crypto records against the
 ## Who is this for?
 
 - Accountants and bookkeepers reconciling a client's crypto wallet activity against the client's records
-- Freelancers paid in ETH or BTC
+- Freelancers paid in ETH, BTC or supported Ethereum tokens such as USDC
 - Independent contractors who need to track crypto income
 - Anyone who wants clean transaction records without complex software
 
@@ -26,7 +26,7 @@ ChainLedger is a simple, local-only tool for checking crypto records against the
 ## What problems does it solve?
 
 ### 1. Transaction Fetching
-Pull ETH transfers from an Ethereum wallet, or transactions from a Bitcoin wallet, with one click. No manual copy-pasting from block explorers. ERC-20 token transfers (such as USDC) are not fetched yet.
+Pull ETH and supported ERC-20 token transfers (USDC, USDT, DAI, WETH, WBTC, LINK, UNI, AAVE, MATIC) from an Ethereum wallet, or transactions from a Bitcoin wallet, with one click. No manual copy-pasting from block explorers. Other tokens are not fetched.
 
 ### 2. Proper Classification
 Transactions are classified as **INCOME**, **EXPENSE**, **TRANSFER**, or **UNKNOWN**. This matters because:
@@ -52,7 +52,7 @@ Check records against on-chain wallet activity:
 - **Client files**: upload a client's ledger / GL export, exchange history or receivables list (CSV or Excel), map its columns, and match each line to on-chain transactions; lines not found on-chain, amount differences and on-chain transactions missing from the ledger are reported
 - **Own-wallet transfers**: pair the outgoing and incoming sides of a move between your wallets, mark both as TRANSFER, and record the network fee as its own expense line
 - **Invoice payments**: match incoming payments to invoices (uploaded receivables or ChainLedger invoices) as paid, partially paid, overpaid or unpaid; unmatched payments go on an exceptions list
-- **Wallet balances**: opening balance + transactions − fees compared with the actual closing balance from the chain (native ETH/BTC only)
+- **Wallet balances**: opening balance + transactions − fees compared with the actual closing balance from the chain (ETH, BTC and supported ERC-20 tokens)
 - **Report**: Excel and CSV with matched and unmatched items, differences, a note per exception, and a timestamped log of manual overrides
 
 See [Reconciliation](docs/reconciliation.md) for the rules and what is not covered.
@@ -110,7 +110,7 @@ python -m pytest
 
 | Feature | Description |
 |---------|-------------|
-| **Wallet Fetching** | Pull transactions from Ethereum (via Alchemy) or Bitcoin (via Blockstream) |
+| **Wallet Fetching** | Pull ETH and supported ERC-20 transfers from Ethereum (via Alchemy), or transactions from Bitcoin (via Blockstream) |
 | **Classification** | Auto-classify as INCOME/EXPENSE/TRANSFER with manual override support |
 | **Fiat Valuation** | Historical USD/CAD values via CoinGecko |
 | **Excel/CSV Export** | Accountant-ready spreadsheets with summaries |
@@ -119,11 +119,11 @@ python -m pytest
 | **Client Record Matching** | Matches client file lines to on-chain transactions by tx hash, or amount and date; reports unmatched lines, amount differences and on-chain transactions missing from the ledger |
 | **Own-Wallet Transfer Matching** | Pairs outgoing/incoming rows between your wallets (same txid, or amount and time window); fee recorded as a separate expense line |
 | **Invoice-to-Payment Matching** | Paid / partially paid / overpaid / unpaid per invoice (uploaded receivables or ChainLedger invoices); unmatched payments listed as exceptions |
-| **Balance Reconciliation** | Expected vs actual closing balance per wallet for native ETH (historical, via Alchemy) and BTC (current balance, or a manually entered one) |
+| **Balance Reconciliation** | Expected vs actual closing balance per wallet and asset: ETH and supported ERC-20 tokens (historical, via Alchemy) and BTC (current balance, or a manually entered one) |
 | **Reconciliation Report** | Excel/CSV report with exception notes and a timestamped override log |
 | **Local Storage** | All data stored in local JSON files |
 
-Not implemented yet: bank statement reconciliation, PDF import, direct QuickBooks/Xero connections or preset formats (their CSV exports can be uploaded through column mapping), presets for specific exchanges, ERC-20 token balance reconciliation.
+Not implemented yet: bank statement reconciliation, PDF import, direct QuickBooks/Xero connections or preset formats (their CSV exports can be uploaded through column mapping), presets for specific exchanges, tokens outside the supported list, other chains.
 
 ---
 
@@ -131,7 +131,7 @@ Not implemented yet: bank statement reconciliation, PDF import, direct QuickBook
 
 | Where | Assets |
 |-------|--------|
-| Fetched from the blockchain | ETH (native transfers on Ethereum) and BTC. ERC-20 tokens such as USDC are not fetched yet. |
+| Fetched from the blockchain | ETH and the ERC-20 tokens USDC, USDT, DAI, WETH, WBTC, LINK, UNI, AAVE, MATIC on Ethereum mainnet (identified by contract address, so look-alike and spam tokens are ignored), and BTC. Other tokens are not fetched. |
 | Historical USD/CAD prices (CoinGecko) | ETH, BTC, USDC, USDT, DAI, WETH, WBTC, MATIC, LINK, UNI, AAVE. Any other symbol is valued at $1.00. |
 | Invoices and client files | Any asset symbol, but only ETH and BTC lines can be matched to fetched on-chain transactions. |
 

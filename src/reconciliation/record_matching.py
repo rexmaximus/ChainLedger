@@ -9,7 +9,8 @@ legitimately appear in both a client ledger and an exchange history.
 
 Rules, in order, for each record inside the reconciliation period:
 1. Manual matches (from the override log).
-2. Transaction hash: the record's hash equals a chain row's hash (case-insensitive).
+2. Transaction hash: the record's hash equals a chain row's hash (case-insensitive)
+   and the asset is the same.
    If the amounts differ beyond tolerance, the pair is still matched and the
    difference is reported.
 3. Amount and date: same asset, the record's expected direction equals the
@@ -180,6 +181,7 @@ def match_client_records(
             hits = [
                 rid for rid, tx in eligible_rows(rec).items()
                 if rid not in used_rows and (tx.get("tx_hash") or "").lower() == h
+                and tx.get("asset", "").upper() == rec.get("asset", "").upper()
                 and (not rec.get("chain_direction") or tx.get("direction") == rec["chain_direction"])
             ]
             if len(hits) == 1:

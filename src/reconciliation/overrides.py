@@ -21,8 +21,8 @@ Override types:
 - unmatch_payment   row_id                   never auto-assign this payment
 - match_record      record_id + row_id       match a client file line to a chain row
 - unmatch_record    record_id                never auto-match this client file line
-- opening_balance   wallet_address + date + amount   manual opening balance
-- closing_balance   wallet_address + date + amount   manual actual closing balance
+- opening_balance   wallet_address + asset + date + amount   manual opening balance
+- closing_balance   wallet_address + asset + date + amount   manual actual closing balance
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ OVERRIDE_FIELDS = {
     "unmatch_payment": ("row_id",),
     "match_record": ("record_id", "row_id"),
     "unmatch_record": ("record_id",),
-    "opening_balance": ("wallet_address", "date", "amount"),
-    "closing_balance": ("wallet_address", "date", "amount"),
+    "opening_balance": ("wallet_address", "asset", "date", "amount"),
+    "closing_balance": ("wallet_address", "asset", "date", "amount"),
 }
 
 
@@ -134,11 +134,14 @@ def unmatched_record_ids(state: dict) -> set[str]:
     return {o["record_id"] for o in active(state, "unmatch_record")}
 
 
-def manual_balance(state: dict, kind: str, wallet_address: str, on_date: str) -> Optional[Decimal]:
-    """Latest active manual balance of `kind` ("opening"/"closing") for a wallet and date."""
+def manual_balance(
+    state: dict, kind: str, wallet_address: str, on_date: str, asset: str = ""
+) -> Optional[Decimal]:
+    """Latest active manual balance of `kind` ("opening"/"closing") for a wallet, asset and date."""
     matches = [
         o for o in active(state, f"{kind}_balance")
         if o["wallet_address"].lower() == wallet_address.lower() and o["date"] == on_date
+        and (not asset or o.get("asset", "").upper() == asset.upper())
     ]
     return to_decimal(matches[-1]["amount"]) if matches else None
 

@@ -233,10 +233,10 @@ async function applyTransfers() {
     try { const r = await post('/reconciliation/api/apply-transfers'); alert(`${r.count} transaction hash(es) set to TRANSFER.`); await rerun(); }
     catch (e) { alert(e.message); }
 }
-function setBalance(kind, wallet, date) {
-    const amount = prompt(`Enter the ${kind} balance for ${wallet} on ${date} (native units):`);
+function setBalance(kind, wallet, asset, date) {
+    const amount = prompt(`Enter the ${kind} ${asset} balance for ${wallet} on ${date}:`);
     if (!amount) return;
-    addOverride(`${kind}_balance`, { wallet_address: wallet, date, amount }, 'Source of this balance (e.g. exchange statement, explorer)');
+    addOverride(`${kind}_balance`, { wallet_address: wallet, asset, date, amount }, 'Source of this balance (e.g. exchange statement, explorer)');
 }
 
 function statusClass(s) { return s === 'paid' ? 'status-paid' : (s === 'unpaid' ? 'status-bad' : 'status-warn'); }
@@ -276,15 +276,15 @@ function render(r) {
         ]));
 
     document.getElementById('balances').innerHTML = table(
-        ['Wallet', 'Opening', 'Inflows', 'Outflows', 'Fees', 'Expected closing', 'Actual closing', 'Difference', 'Sources', ''],
+        ['Wallet', 'Asset', 'Opening', 'Inflows', 'Outflows', 'Fees', 'Expected closing', 'Actual closing', 'Difference', 'Sources', ''],
         r.balances.map(b => [
-            td(short(b.wallet_address), 'mono'),
+            td(short(b.wallet_address), 'mono'), td(b.asset),
             td(b.opening_balance ?? '—'), td(b.inflows), td(b.outflows), td(b.fees),
             td(b.expected_closing ?? '—'), td(b.actual_closing ?? '—'),
             td(b.difference ?? 'n/a', b.reconciled ? 'status-paid' : 'status-bad'),
             td(`Opening: ${b.opening_source}; Closing: ${b.actual_source}`),
-            tdHtml(`<button class="btn btn-small" onclick="setBalance('opening', '${esc(b.wallet_address)}', '${esc(b.period_start)}')">Enter opening</button>
-                    <button class="btn btn-small" onclick="setBalance('closing', '${esc(b.wallet_address)}', '${esc(b.period_end)}')">Enter closing</button>`),
+            tdHtml(`<button class="btn btn-small" onclick="setBalance('opening', '${esc(b.wallet_address)}', '${esc(b.asset)}', '${esc(b.period_start)}')">Enter opening</button>
+                    <button class="btn btn-small" onclick="setBalance('closing', '${esc(b.wallet_address)}', '${esc(b.asset)}', '${esc(b.period_end)}')">Enter closing</button>`),
         ]));
 
     document.getElementById('transfers').innerHTML = table(
