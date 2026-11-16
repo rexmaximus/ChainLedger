@@ -17,7 +17,7 @@ ChainLedger reconciles **on-chain wallet data against records supplied by a clie
 | Invoice payments | Uploaded receivables and invoices created in ChainLedger vs incoming payments | Paid / partially paid / overpaid / unpaid, unmatched payments |
 | Wallet balances | Opening balance + transactions − fees vs the actual closing balance | Difference per wallet |
 
-It does **not** reconcile bank statements, read PDFs, or connect to QuickBooks or Xero. See [Not covered](#not-covered).
+It does **not yet** reconcile bank statements, read PDFs, or connect to QuickBooks or Xero. See [Not covered yet](#not-covered-yet).
 
 ---
 
@@ -161,9 +161,9 @@ The last fetch is cached in `data/reconciliation/last_run.json`, so **Re-run las
 
 ---
 
-## Not covered
+## Not covered yet
 
-- Bank statement reconciliation (bank lines are fiat and are not matched to on-chain data)
+- Bank statement reconciliation (bank lines are fiat; nothing matches them to on-chain data yet)
 - PDF files of any kind
 - Direct QuickBooks / Xero connections, preset formats for them or for specific exchanges, or posting entries to a ledger (their CSV exports can be uploaded with column mapping)
 - Fiat amounts in client files (lines are compared in crypto units)

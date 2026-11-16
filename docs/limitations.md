@@ -138,7 +138,7 @@ It's designed for desktop use.
 
 ## Limited Reconciliation
 
-The reconciliation layer compares on-chain data with client CSV/Excel files, with invoices, and with itself. It does not:
+The reconciliation layer compares on-chain data with client CSV/Excel files, with invoices, and with itself. It does not yet:
 
 - Reconcile bank statements
 - Read PDF files

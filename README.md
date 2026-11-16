@@ -1,4 +1,4 @@
-NOTE: Implemented: wallet fetching, classification, exports, a reconciliation layer (client CSV/Excel files, own-wallet transfers and invoice payments matched to on-chain data, native ETH/BTC balance checks) and freelancer invoicing. Not implemented: bank statement reconciliation, PDF import, direct QuickBooks/Xero connections, ERC-20 balance checks.
+NOTE: Implemented: wallet fetching, classification, exports, a reconciliation layer (client CSV/Excel files, own-wallet transfers and invoice payments matched to on-chain data, native ETH/BTC balance checks) and freelancer invoicing. Not implemented yet: bank statement reconciliation, PDF import, direct QuickBooks/Xero connections, ERC-20 balance checks.
 
 # ChainLedger
 
