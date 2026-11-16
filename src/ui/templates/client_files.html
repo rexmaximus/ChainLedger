@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}Client Files - ChainLedger{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Client Files</h1>
+    <p class="subtitle">Upload records a client gives you (CSV or Excel), map the columns, then reconcile them against on-chain data</p>
+</div>
+
+<div class="card">
+    <form id="uploadForm" onsubmit="uploadFile(event)">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="fileType">What is this file?</label>
+                <select id="fileType">
+                    {% for key, label in file_types.items() %}
+                    <option value="{{ key }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <small class="form-hint" id="typeHint"></small>
+            </div>
+            <div class="form-group">
+                <label for="fileInput">File (.csv or .xlsx, max 10 MB)</label>
+                <input type="file" id="fileInput" accept=".csv,.xlsx,.txt" required>
+                <small class="form-hint">The first non-empty row must be the column headers. Excel: first sheet only. PDF is not supported.</small>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="uploadBtn">Upload</button>
+        </div>
+    </form>
+</div>
+
+<div id="errorSection" class="result-section" style="display:none;">
+    <div class="result-card error"><h3>Error</h3><p id="errorMessage"></p></div>
+</div>
+
+<div id="mappingSection" class="section" style="display:none;">
+    <h2 id="mappingTitle">Map columns</h2>
+    <div class="card">
+        <h3>Preview (first 5 rows)</h3>
+        <div class="recon-scroll" id="previewTable"></div>
+
+        <h3 style="margin-top:1rem;">Columns</h3>
+        <div class="form-row" id="mappingFields" style="flex-wrap:wrap;"></div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="dateFormat">Date format</label>
+                <select id="dateFormat">
+                    {% for key, label in date_formats.items() %}
+                    <option value="{{ key }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="defaultAsset">Default asset (if no asset column)</label>
+                <input type="text" id="defaultAsset" placeholder="ETH">
+            </div>
+            <div class="form-group" id="walletGroup">
+                <label for="walletAddress">Wallet this ledger covers (optional)</label>
+                <input type="text" id="walletAddress" list="savedWallets" placeholder="Leave blank to compare with all wallets">
+                <datalist id="savedWallets">
+                    {% for w in wallets %}<option value="{{ w.address }}">{{ w.name }}</option>{% endfor %}
+                </datalist>
+            </div>
+        </div>
+        <div class="form-row" id="exchangeWords">
+            <div class="form-group">
+                <label for="withdrawalWords">Type words meaning withdrawal</label>
+                <input type="text" id="withdrawalWords" placeholder="withdraw, send, sent, payout">
+            </div>
+            <div class="form-group">
+                <label for="depositWords">Type words meaning deposit</label>
+                <input type="text" id="depositWords" placeholder="deposit, receive, received">
+            </div>
+        </div>
+        <small class="form-hint" id="exchangeHint">Withdrawals are expected as incoming transactions in your wallets; deposits as outgoing. Other types (trades, interest) are not expected on-chain.</small>
+
+        <div class="form-actions">
+            <button class="btn btn-primary" onclick="saveMapping()">Save mapping and check rows</button>
+            <button class="btn" onclick="hideMapping()">Close</button>
+        </div>
+        <div id="mappingResult"></div>
+    </div>
+</div>
+
+<div class="section">
+    <h2>Uploaded Files</h2>
+    <div class="card recon-scroll" id="fileList"></div>
+    <p class="text-muted">Files marked <strong>ready</strong> are included in every reconciliation run. Lines outside the run's period are skipped.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.recon-scroll { overflow-x: auto; }
+.recon-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.recon-table th, .recon-table td { padding: 6px 8px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+.recon-table th { background: var(--bg-tertiary); white-space: nowrap; }
+#mappingFields .form-group { min-width: 200px; flex: 1 1 200px; }
+.status-ready { color: var(--success-color); font-weight: 600; }
+.status-needs { color: var(--warning-color); font-weight: 600; }
+.row-errors { color: var(--danger-color); font-size: 0.85rem; margin-top: 0.5rem; }
+</style>
+<script>
+const TYPE_HINTS = {
+    ledger: 'A general ledger or account export for a crypto wallet account. Every line is expected on-chain; on-chain transactions missing from it are reported too.',
+    exchange: 'An exchange transaction history. Deposits and withdrawals are matched to your wallets.',
+    receivables: 'A list of invoices the client issued. Matched to incoming payments like ChainLedger invoices.',
+};
+let current = null;
+
+function esc(v) {
+    return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function table(headers, rows) {
+    if (!rows.length) return '<p class="empty-state">None</p>';
+    return `<table class="recon-table"><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+            <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+function showError(msg) {
+    document.getElementById('errorSection').style.display = msg ? 'block' : 'none';
+    document.getElementById('errorMessage').textContent = msg || '';
+}
+function updateTypeHint() {
+    document.getElementById('typeHint').textContent = TYPE_HINTS[document.getElementById('fileType').value];
+}
+
+async function uploadFile(event) {
+    event.preventDefault();
+    showError('');
+    const form = new FormData();
+    form.append('file', document.getElementById('fileInput').files[0]);
+    form.append('file_type', document.getElementById('fileType').value);
+    document.getElementById('uploadBtn').disabled = true;
+    try {
+        const res = await fetch('/client-files/api/upload', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+        document.getElementById('uploadForm').reset();
+        updateTypeHint();
+        showMapping(data);
+        loadFiles();
+    } catch (e) { showError(e.message); }
+    document.getElementById('uploadBtn').disabled = false;
+}
+
+async function openFile(id) {
+    showError('');
+    const res = await fetch(`/client-files/api/${encodeURIComponent(id)}`);
+    const data = await res.json();
+    if (!res.ok) return showError(data.error);
+    showMapping(data);
+}
+
+function showMapping(file) {
+    current = file;
+    const m = file.mapping || {};
+    document.getElementById('mappingSection').style.display = 'block';
+    document.getElementById('mappingTitle').textContent = `Map columns: ${file.original_name}`;
+    document.getElementById('previewTable').innerHTML = table(file.headers, file.preview.map(r => file.headers.map(h => esc(r[h]))));
+    const options = ['<option value="">— not in file —</option>'].concat(file.headers.map(h => `<option value="${esc(h)}">${esc(h)}</option>`)).join('');
+    document.getElementById('mappingFields').innerHTML = Object.entries(file.fields).map(([name, f]) => `
+        <div class="form-group">
+            <label for="map_${name}">${esc(f.label)}${f.required ? ' *' : ''}</label>
+            <select id="map_${name}" data-field="${name}">${options}</select>
+        </div>`).join('');
+    for (const name of Object.keys(file.fields)) {
+        document.getElementById(`map_${name}`).value = m[name] || '';
+    }
+    document.getElementById('dateFormat').value = m.date_format || 'iso';
+    document.getElementById('defaultAsset').value = m.default_asset || '';
+    document.getElementById('withdrawalWords').value = m.withdrawal_words || '';
+    document.getElementById('depositWords').value = m.deposit_words || '';
+    document.getElementById('walletAddress').value = file.wallet_address || '';
+    document.getElementById('walletGroup').style.display = file.file_type === 'ledger' ? 'block' : 'none';
+    const isExchange = file.file_type === 'exchange';
+    document.getElementById('exchangeWords').style.display = isExchange ? 'flex' : 'none';
+    document.getElementById('exchangeHint').style.display = isExchange ? 'block' : 'none';
+    document.getElementById('mappingResult').innerHTML = '';
+    document.getElementById('mappingSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+function hideMapping() {
+    document.getElementById('mappingSection').style.display = 'none';
+    current = null;
+}
+
+async function saveMapping() {
+    if (!current) return;
+    const mapping = {};
+    document.querySelectorAll('#mappingFields select').forEach(s => { if (s.value) mapping[s.dataset.field] = s.value; });
+    mapping.date_format = document.getElementById('dateFormat').value;
+    mapping.default_asset = document.getElementById('defaultAsset').value;
+    mapping.withdrawal_words = document.getElementById('withdrawalWords').value;
+    mapping.deposit_words = document.getElementById('depositWords').value;
+    const res = await fetch(`/client-files/api/${encodeURIComponent(current.id)}/mapping`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ mapping, wallet_address: document.getElementById('walletAddress').value }),
+    });
+    const r = await res.json();
+    if (!res.ok) return showError(r.error);
+    let html = `<p class="${r.success ? 'status-ready' : 'status-needs'}">${r.record_count} usable rows, ${r.error_count} rows with errors.
+                ${r.success ? 'This file will be included in reconciliation runs.' : 'Fix the mapping before this file can be used.'}</p>`;
+    if (r.errors.length) html += `<div class="row-errors">${r.errors.map(esc).join('<br>')}${r.error_count > r.errors.length ? '<br>…' : ''}</div>`;
+    if (r.preview.length) {
+        const cols = current.file_type === 'receivables'
+            ? ['line', 'invoice_number', 'created_at', 'recipient_name', 'crypto_amount', 'token_type', 'recipient_wallet', 'status']
+            : ['line', 'date', 'asset', 'amount', 'chain_direction', 'fee', 'tx_hash', 'reference', 'description'];
+        html += `<h3 style="margin-top:1rem;">How the first rows were read</h3>` + table(cols, r.preview.map(p => cols.map(c => esc(p[c]))));
+    }
+    document.getElementById('mappingResult').innerHTML = html;
+    loadFiles();
+}
+
+let filesCache = [];
+async function deleteFile(index) {
+    const { id, original_name: name } = filesCache[index];
+    if (!confirm(`Remove ${name}? The uploaded copy in ChainLedger's data folder is deleted; your original file is not touched.`)) return;
+    const res = await fetch(`/client-files/api/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) return showError((await res.json()).error);
+    if (current && current.id === id) hideMapping();
+    loadFiles();
+}
+
+async function loadFiles() {
+    const files = await (await fetch('/client-files/api/list')).json();
+    filesCache = files;
+    const labels = {{ file_types|tojson }};
+    document.getElementById('fileList').innerHTML = table(
+        ['File', 'Type', 'Uploaded (UTC)', 'Rows', 'Usable', 'Row errors', 'Status', ''],
+        files.map((f, i) => [
+            esc(f.original_name), esc(labels[f.file_type]), esc(f.uploaded_at), esc(f.row_count),
+            esc(f.record_count), esc(f.error_count),
+            `<span class="${f.status === 'ready' ? 'status-ready' : 'status-needs'}">${esc(f.status)}</span>`,
+            `<button class="btn btn-small" onclick="openFile(filesCache[${i}].id)">Mapping</button>
+             <button class="btn btn-small btn-danger" onclick="deleteFile(${i})">Remove</button>`,
+        ]));
+}
+
+document.getElementById('fileType').addEventListener('change', updateTypeHint);
+updateTypeHint();
+loadFiles();
+</script>
+{% endblock %}

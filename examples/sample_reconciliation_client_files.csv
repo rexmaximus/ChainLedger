@@ -1,0 +1,85 @@
+CHAINLEDGER RECONCILIATION REPORT
+
+SUMMARY
+Item,Value
+Generated at (UTC),2026-11-16T00:20:36+00:00
+Own wallets,"0x1111111111111111111111111111111111111111, 0x2222222222222222222222222222222222222222"
+Transfer time window (hours),2.0
+Invoice amount tolerance (%),0.5
+Matched transfers,1
+Unmatched transfer legs,0
+Network fee expense lines,1
+Invoices checked,3
+Invoices paid,1
+Invoices partially paid,1
+Invoices unpaid,1
+Unmatched incoming payments,0
+Client records matched to chain,6
+Client records matched with amount differences,1
+Client records not found on-chain,2
+Client exchange lines not expected on-chain (trades etc.),1
+Client records outside the period (skipped),1
+On-chain transactions missing from client ledger,1
+Wallet balances checked,2
+Wallet balances reconciled (difference = 0),1
+Exceptions,7
+Active manual overrides,0
+
+MATCHED TRANSFERS
+Transfer ID,Match Method,Network,Asset,From Wallet,Outgoing Tx Hash,Sent At (UTC),Amount Sent,To Wallet,Incoming Tx Hash,Received At (UTC),Amount Received,Network Fee,Fee Asset
+TR-0001,same_txid,Ethereum,ETH,0x1111111111111111111111111111111111111111,0xmove1,2024-03-05T09:00:00+00:00,1.5,0x2222222222222222222222222222222222222222,0xmove1,2024-03-05T09:00:00+00:00,1.5,0.0021,ETH
+
+UNMATCHED TRANSFER LEGS
+Side,Date,Wallet,Tx Hash,From Address,To Address,Asset,Amount,Reason
+(none)
+
+NETWORK FEES
+Transfer ID,Date,Time,Wallet,Tx Hash,Network,Asset,Fee Amount,Fee (USD),Fee (CAD),Transaction Type,Description
+TR-0001,2024-03-05,09:00:00,0x1111111111111111111111111111111111111111,0xmove1,Ethereum,ETH,0.0021,,,EXPENSE,Network fee on own-wallet transfer
+
+INVOICE MATCHING
+Source,Invoice Number,Customer,Invoice Date,Asset,Invoice Amount,Amount Received,Difference,Matched Status,Status In Invoice List,Match Method,Payer Verified,Payment Tx Hashes
+client file,INV-C-101,Client A,2024-03-01,ETH,2,2,0,paid,open,exact_amount,yes,0xpay1
+client file,INV-C-102,Client B,2024-03-08,ETH,1,0.6,-0.4,partially paid,open,payer_accumulated,yes,0xpay2a; 0xpay2b
+client file,INV-C-103,Client C,2024-03-25,ETH,0.75,0,-0.75,unpaid,open,,no,
+
+UNMATCHED PAYMENTS
+Date,Wallet,Tx Hash,From Address,Asset,Amount,Reason
+(none)
+
+CLIENT RECORDS MATCHED
+File Type,Record ID,Match Method,Asset,Client Date,Client Amount,Chain Date,Chain Amount,Difference (Chain - Client),Amount Within Tolerance,Tx Hash
+ledger,ledger1:2,tx_hash,ETH,2024-03-04,2,2024-03-04,2,0,yes,0xpay1
+ledger,ledger1:4,tx_hash,ETH,2024-03-10,0.4,2024-03-10,0.4,0,yes,0xpay2a
+ledger,ledger1:5,tx_hash,ETH,2024-03-15,0.31,2024-03-15,0.3,-0.01,no,0xvendor
+ledger,ledger1:3,amount_and_date,ETH,2024-03-05,1.5021,2024-03-05,1.5,-0.0021,yes,0xmove1
+ledger,ledger1:6,amount_and_date,ETH,2024-03-20,0.05,2024-03-20,0.05,0,yes,0xmystery
+exchange,ex1:3,amount_and_date,ETH,2024-03-20,0.05,2024-03-20,0.05,0,yes,0xmystery
+
+CLIENT RECORDS UNMATCHED
+File Type,File,Line,Date,Asset,Amount,Expected Direction,Tx Hash,Reference,Description,Reason
+ledger,client_ledger.csv,7,2024-03-28,ETH,0.1,Out,,JE-1006,Software subscription,Not found on-chain
+exchange,exchange_history.csv,4,2024-03-29,ETH,1.0,In,,,,Not found on-chain
+
+ON-CHAIN NOT IN LEDGER
+Date,Wallet,Tx Hash,Direction,Asset,Amount,Fee
+2024-03-12,0x1111111111111111111111111111111111111111,0xpay2b,In,ETH,0.2,0
+
+BALANCE RECONCILIATION
+Wallet,Network,Asset,Period Start,Period End,Opening Balance,Opening Source,Inflows,Outflows,Network Fees,Expected Closing,Actual Closing,Actual Source,Difference (Actual - Expected),Reconciled
+0x1111111111111111111111111111111111111111,Ethereum,ETH,2024-03-01,2024-03-31,1,sample,2.65,1.8,0.003,1.847,1.8465,sample,-0.0005,no
+0x2222222222222222222222222222222222222222,Ethereum,ETH,2024-03-01,2024-03-31,5,sample,1.5,0,0,6.5,6.5,sample,0,yes
+
+EXCEPTIONS
+Exception ID,Category,Reference,Date,Asset,Amount,Detail,Note
+invoice:file:ar1:3,Invoice partially paid,INV-C-102,2024-03-08,ETH,1,"Received 0.6, difference -0.4",
+invoice:file:ar1:4,Invoice unpaid,INV-C-103,2024-03-25,ETH,0.75,"Received 0, difference -0.75",
+client_record:ledger1:7,Client ledger line not matched on-chain,JE-1006,2024-03-28,ETH,0.1,"Not found on-chain. File client_ledger.csv, line 7: Software subscription",
+client_record:ex1:4,Client exchange line not matched on-chain,line 4,2024-03-29,ETH,1.0,"Not found on-chain. File exchange_history.csv, line 4",
+client_amount:ledger1:5,Client record amount differs from chain,0xvendor,2024-03-15,ETH,-0.01,Client 0.31 vs chain 0.3,"Asked client: contractor invoice was 0.31 ETH, only 0.30 ETH paid on-chain"
+not_in_ledger:Ethereum:0xpay2b:In:0x1111111111111111111111111111111111111111,On-chain transaction missing from client ledger,0xpay2b,2024-03-12,ETH,0.2,Received in wallet 0x1111111111111111111111111111111111111111,
+balance:Ethereum:0x1111111111111111111111111111111111111111:2024-03-01:2024-03-31,Balance difference,0x1111111111111111111111111111111111111111,2024-03-31,ETH,-0.0005,Actual 1.8465 vs expected 1.847,
+
+OVERRIDE LOG
+Timestamp (UTC),Action,Override ID,Details,Note
+2026-11-16T00:20:36+00:00,note,,exception client_amount:ledger1:5,"Asked client: contractor invoice was 0.31 ETH, only 0.30 ETH paid on-chain"

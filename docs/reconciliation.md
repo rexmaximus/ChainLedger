@@ -8,15 +8,46 @@ Code: `src/reconciliation/`. Tests: `tests/`. Sample output: `examples/sample_re
 
 ## What it reconciles
 
-ChainLedger reconciles **on-chain wallet data against itself and against ChainLedger's own invoices**:
+ChainLedger reconciles **on-chain wallet data against records supplied by a client, against invoices, and against itself**:
 
 | Check | Compares | Output |
 |-------|----------|--------|
+| Client files | Lines in an uploaded ledger / GL export or exchange history vs on-chain transactions | Matched lines, lines not found on-chain, amount differences, on-chain transactions missing from the ledger |
 | Own-wallet transfers | Outgoing rows in one of your wallets vs incoming rows in another | Matched pairs, network fee lines, unmatched legs |
-| Invoice payments | Invoices created in ChainLedger vs incoming payments | Paid / partially paid / overpaid / unpaid, unmatched payments |
+| Invoice payments | Uploaded receivables and invoices created in ChainLedger vs incoming payments | Paid / partially paid / overpaid / unpaid, unmatched payments |
 | Wallet balances | Opening balance + transactions − fees vs the actual closing balance | Difference per wallet |
 
-It does **not** reconcile against exchange statements, bank statements, or an accounting ledger (QuickBooks, Xero). See [Not covered](#not-covered).
+It does **not** reconcile bank statements, read PDFs, or connect to QuickBooks or Xero. See [Not covered](#not-covered).
+
+---
+
+## 0. Client files
+
+On the **Client Files** page, upload a `.csv` or `.xlsx` file (max 10 MB) and say what it is:
+
+| File type | Each line is… | Expected on-chain as |
+|-----------|---------------|----------------------|
+| Client ledger / GL export | an entry in the client's crypto wallet account | Debit / positive = into a wallet; credit / negative = out of a wallet |
+| Exchange transaction history | a line from the client's exchange account | Withdrawal = into a wallet; deposit = out of a wallet; other types (trades, interest) are not expected on-chain |
+| Receivables (invoice list) | an invoice the client issued | Matched to incoming payments like ChainLedger invoices (section 2) |
+
+The first non-empty row must be the headers (Excel: first sheet only). ChainLedger suggests a column for each field from the header names; you confirm or change it, pick the date format (ISO, MM/DD/YYYY or DD/MM/YYYY), and give a default asset if the file has no currency column. Saving the mapping reads every row and reports each unreadable row by line number. A file with at least one usable row is marked **ready** and is included in every reconciliation run. Uploads, mapping changes and removals are written to the override log.
+
+A ledger file can be tied to one wallet. Then only that wallet's on-chain transactions are compared with it.
+
+Matching, per file type (ledger and exchange lines are matched separately, since one on-chain transaction can appear in both):
+
+1. Manual matches are applied first.
+2. **Transaction hash**: the line's hash equals an on-chain transaction's hash. If the amounts differ beyond tolerance, the line is still matched and the difference is reported as an exception.
+3. **Amount and date**: same asset, the expected direction, dates within the window (default 3 days), and amounts within tolerance (default 0.5%). A ledger amount may include the network fee of an outgoing transaction; an exchange withdrawal may be reported before its withdrawal fee. When more than one transaction could match, nothing is matched and the line is reported as ambiguous.
+
+Lines outside the run's period are skipped and counted. Exceptions:
+
+- a ledger or exchange line not found on-chain
+- a matched line whose amount differs from the chain
+- for ledger files: an on-chain transaction with no ledger line
+
+An incoming transaction matched to an exchange withdrawal is the client's own funds, so it is not treated as a customer payment in invoice matching.
 
 ---
 
@@ -43,7 +74,7 @@ The match results only appear in the reconciliation report. To carry confirmed m
 
 ## 2. Invoice-to-payment matching
 
-Inputs: invoices created in ChainLedger (`data/metadata.json`, cancelled invoices skipped) and incoming rows not matched as own-wallet transfers.
+Inputs: invoices from uploaded receivables files and invoices created in ChainLedger (`data/metadata.json`); cancelled or void invoices are skipped. Payments are incoming rows not matched as own-wallet transfers or exchange withdrawals.
 
 A payment is **eligible** for an invoice when:
 
@@ -101,7 +132,7 @@ A non-zero difference means the fetched transactions do not explain the balance 
 
 Each run writes an Excel file (one sheet per section) and a CSV file (the same sections in order) to `data/exports/`:
 
-`Summary`, `Matched Transfers`, `Unmatched Transfer Legs`, `Network Fees`, `Invoice Matching`, `Unmatched Payments`, `Balance Reconciliation`, `Exceptions`, `Override Log`.
+`Summary`, `Matched Transfers`, `Unmatched Transfer Legs`, `Network Fees`, `Invoice Matching`, `Unmatched Payments`, `Client Records Matched`, `Client Records Unmatched`, `On-Chain Not In Ledger`, `Balance Reconciliation`, `Exceptions`, `Override Log`.
 
 **Exceptions** list every item needing review, each with a stable ID and a free-text **note** you can edit on the page.
 
@@ -113,6 +144,8 @@ Each run writes an Excel file (one sheet per section) and a CSV file (the same s
 | Unlink transfer | Stop a row from being auto-matched as a transfer |
 | Match to invoice | Assign a payment to an invoice |
 | Unmatch payment | Stop a payment from being auto-assigned |
+| Match client record | Match a client file line to an on-chain transaction |
+| Unmatch client record | Stop a client file line from being auto-matched |
 | Opening / closing balance | Use a manually entered balance |
 
 Every override needs a reason. Adding or removing an override, editing a note, and applying transfers to the Accounting export are each written to the **override log** with a UTC timestamp. Removed overrides are kept (marked inactive) so the history is complete. All of this is stored in `data/metadata.json` under `reconciliation`.
@@ -130,9 +163,10 @@ The last fetch is cached in `data/reconciliation/last_run.json`, so **Re-run las
 
 ## Not covered
 
-- Exchange statement (CSV) import
-- Bank statement import
-- QuickBooks / Xero or other ledger import, or posting to a ledger
+- Bank statement reconciliation (bank lines are fiat and are not matched to on-chain data)
+- PDF files of any kind
+- Direct QuickBooks / Xero connections, preset formats for them or for specific exchanges, or posting entries to a ledger (their CSV exports can be uploaded with column mapping)
+- Fiat amounts in client files (lines are compared in crypto units)
 - ERC-20 token balances (only native ETH/BTC balances are reconciled)
 - Fiat (USD/CAD) balance reconciliation; balances are compared in crypto units
 - Assigning one Bitcoin fee when several of your wallets fund the same transaction (each wallet's row shows the whole fee)

@@ -1,12 +1,35 @@
 {% extends "base.html" %}
 
-{% block title %}Invoices - ChainLedger{% endblock %}
+{% block title %}Freelancer Tools - ChainLedger{% endblock %}
 
 {% block content %}
 <div class="page-header">
-    <h1>Invoices</h1>
-    <p class="subtitle">Manage your crypto invoices</p>
+    <h1>Freelancer Tools</h1>
+    <p class="subtitle">Invoices for your own crypto-paid work. Payments against them are checked on the Reconciliation page.</p>
 </div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-content">
+            <div class="stat-value">{{ stats.total_invoices }}</div>
+            <div class="stat-label">Total Invoices</div>
+        </div>
+    </div>
+    <div class="stat-card warning">
+        <div class="stat-content">
+            <div class="stat-value">{{ stats.unpaid_invoices }}</div>
+            <div class="stat-label">Unpaid (${{ "%.2f"|format(stats.total_unpaid_usd) }} USD at invoice date)</div>
+        </div>
+    </div>
+    <div class="stat-card success">
+        <div class="stat-content">
+            <div class="stat-value">{{ stats.paid_invoices }}</div>
+            <div class="stat-label">Paid (${{ "%.2f"|format(stats.total_paid_usd) }} USD at invoice date)</div>
+        </div>
+    </div>
+</div>
+
+<h2>Invoices</h2>
 
 <div class="section-header">
     <div class="filter-tabs">

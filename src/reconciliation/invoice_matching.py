@@ -61,6 +61,8 @@ class InvoiceMatch:
     payment_tx_hashes: list[str] = field(default_factory=list)
     payer_verified: bool = False
     method: str = ""  # "exact_amount", "payer_accumulated", "manual" or ""
+    source: str = "ChainLedger invoice"  # or "client file"
+    customer: str = ""
 
 
 @dataclass
@@ -107,7 +109,9 @@ def match_invoices_to_payments(
     pay_rows = {row_id(p): p for p in payments if p.get("direction") == "In"}
     assigned: dict[str, str] = {}  # payment row id -> invoice id
 
-    open_invoices = [i for i in invoices if (i.get("status") or "").lower() != "cancelled"]
+    open_invoices = [
+        i for i in invoices if (i.get("status") or "").lower() not in ("cancelled", "void", "voided")
+    ]
     open_invoices.sort(key=lambda i: i.get("created_at", ""))
 
     manual_by_invoice: dict[str, list[str]] = {}
@@ -208,6 +212,8 @@ def match_invoices_to_payments(
             payment_tx_hashes=[pay_rows[p].get("tx_hash", "") for p in chosen],
             payer_verified=payer_verified,
             method=method,
+            source=inv.get("source") or "ChainLedger invoice",
+            customer=inv.get("recipient_name", ""),
         ))
 
     for pid, tx in sorted(pay_rows.items(), key=lambda kv: tx_datetime(kv[1])):

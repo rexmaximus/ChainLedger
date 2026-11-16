@@ -55,6 +55,12 @@ def sample_transactions():
 
 
 def sample_invoices():
+    contact = {"sender_name": "Sample Freelancer", "sender_email": "freelancer@example.com",
+               "recipient_email": "client@example.com"}
+    return [{**contact, "recipient_name": f"Client {n}", **inv} for n, inv in zip("ABC", _invoices())]
+
+
+def _invoices():
     return [
         {"id": "inv-1", "invoice_number": "INV-00001", "created_at": "2024-03-01T09:00:00",
          "crypto_amount": 2.0, "token_type": "ETH", "recipient_wallet": CLIENT_A,

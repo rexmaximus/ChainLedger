@@ -1,0 +1,8 @@
+Date,Entry,Account,Description,Debit,Credit,Currency,Tx Hash
+03/04/2024,JE-1001,ETH Hot Wallet,Client A payment INV-C-101,2.0,,ETH,0xpay1
+03/05/2024,JE-1002,ETH Hot Wallet,Transfer to cold storage incl. gas,,1.5021,ETH,
+03/10/2024,JE-1003,ETH Hot Wallet,Client B instalment 1,0.4,,ETH,0xpay2a
+03/15/2024,JE-1004,ETH Hot Wallet,Design contractor,,0.31,ETH,0xvendor
+03/20/2024,JE-1005,ETH Hot Wallet,Withdrawal from exchange,0.05,,ETH,
+03/28/2024,JE-1006,ETH Hot Wallet,Software subscription,,0.1,ETH,
+04/02/2024,JE-1007,ETH Hot Wallet,April entry (outside period),1.0,,ETH,

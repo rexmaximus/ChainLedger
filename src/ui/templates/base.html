@@ -13,9 +13,10 @@
         </div>
         <div class="nav-links">
             <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">Dashboard</a>
-            <a href="/accounting" class="nav-link {% if '/accounting' in request.path %}active{% endif %}">Accounting</a>
-            <a href="/invoices" class="nav-link {% if '/invoices' in request.path %}active{% endif %}">Invoices</a>
             <a href="/reconciliation" class="nav-link {% if '/reconciliation' in request.path %}active{% endif %}">Reconciliation</a>
+            <a href="/client-files" class="nav-link {% if '/client-files' in request.path %}active{% endif %}">Client Files</a>
+            <a href="/accounting" class="nav-link {% if '/accounting' in request.path %}active{% endif %}">Transactions</a>
+            <a href="/invoices" class="nav-link {% if '/invoices' in request.path %}active{% endif %}">Freelancer Tools</a>
         </div>
     </nav>
 

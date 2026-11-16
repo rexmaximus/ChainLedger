@@ -19,6 +19,8 @@ Override types:
 - unlink_transfer   row_id                   never auto-match this row as a transfer
 - match_invoice     invoice_id + row_id      assign a payment to an invoice
 - unmatch_payment   row_id                   never auto-assign this payment
+- match_record      record_id + row_id       match a client file line to a chain row
+- unmatch_record    record_id                never auto-match this client file line
 - opening_balance   wallet_address + date + amount   manual opening balance
 - closing_balance   wallet_address + date + amount   manual actual closing balance
 """
@@ -36,6 +38,8 @@ OVERRIDE_FIELDS = {
     "unlink_transfer": ("row_id",),
     "match_invoice": ("invoice_id", "row_id"),
     "unmatch_payment": ("row_id",),
+    "match_record": ("record_id", "row_id"),
+    "unmatch_record": ("record_id",),
     "opening_balance": ("wallet_address", "date", "amount"),
     "closing_balance": ("wallet_address", "date", "amount"),
 }
@@ -120,6 +124,14 @@ def manual_invoice_matches(state: dict) -> list[tuple[str, str]]:
 
 def unmatched_payment_rows(state: dict) -> set[str]:
     return {o["row_id"] for o in active(state, "unmatch_payment")}
+
+
+def manual_record_matches(state: dict) -> list[tuple[str, str]]:
+    return [(o["record_id"], o["row_id"]) for o in active(state, "match_record")]
+
+
+def unmatched_record_ids(state: dict) -> set[str]:
+    return {o["record_id"] for o in active(state, "unmatch_record")}
 
 
 def manual_balance(state: dict, kind: str, wallet_address: str, on_date: str) -> Optional[Decimal]:

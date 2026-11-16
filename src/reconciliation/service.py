@@ -142,6 +142,11 @@ class ReconciliationService:
         time_window_hours: float = 2,
         invoice_tolerance_pct: Decimal = Decimal("0.5"),
         include_prices: bool = False,
+        client_records: Optional[list[dict]] = None,
+        receivables: Optional[list[dict]] = None,
+        file_wallets: Optional[dict[str, str]] = None,
+        record_tolerance_pct: Decimal = Decimal("0.5"),
+        date_window_days: int = 3,
     ) -> tuple[ReconciliationReport, dict]:
         """Classify, reconcile and export. Returns the report and file names."""
         classified = classify_transactions(
@@ -155,6 +160,13 @@ class ReconciliationService:
             state=state,
             time_window_hours=time_window_hours,
             invoice_tolerance_pct=invoice_tolerance_pct,
+            client_records=client_records,
+            receivables=receivables,
+            file_wallets=file_wallets,
+            period_start=inputs.get("period_start"),
+            period_end=inputs.get("period_end"),
+            record_tolerance_pct=record_tolerance_pct,
+            date_window_days=date_window_days,
         )
         if include_prices:
             add_fee_fiat_values(report)

@@ -32,6 +32,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.wallet import LedgerGenerator, validate_ethereum_address, validate_bitcoin_address, SUPPORTED_NETWORKS
 from src.exports import ExportService, get_price_oracle
 from src.invoices import InvoiceGenerator
+from src.imports import (
+    DATE_FORMATS, FILE_TYPES, MAPPING_FIELDS, ImportErrorWithRows, apply_mapping, parse_file, suggest_mapping,
+)
 from src.reconciliation import overrides as recon_overrides
 from src.reconciliation.service import ReconciliationService, fetch_inputs
 
@@ -121,11 +124,13 @@ class MetadataManager:
         self.metadata_path = data_dir / "metadata.json"
         self.invoices_dir = data_dir / "invoices"
         self.exports_dir = data_dir / "exports"
+        self.client_files_dir = data_dir / "client_files"
 
         # Ensure directories exist
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.invoices_dir.mkdir(exist_ok=True)
         self.exports_dir.mkdir(exist_ok=True)
+        self.client_files_dir.mkdir(exist_ok=True)
 
         self._data = self._load()
 
@@ -314,6 +319,36 @@ class MetadataManager:
     def save_reconciliation_state(self) -> None:
         self._save()
 
+    def set_last_reconciliation(self, info: dict) -> None:
+        self.get_reconciliation_state()["last_run"] = info
+        self._save()
+
+    # Client files (uploaded CSV/Excel from a client)
+    def get_client_files(self) -> list[dict]:
+        return list(self._data.setdefault("client_files", []))
+
+    def get_client_file(self, file_id: str) -> Optional[dict]:
+        return next((f for f in self._data.setdefault("client_files", []) if f["id"] == file_id), None)
+
+    def add_client_file(self, record: dict) -> None:
+        self._data.setdefault("client_files", []).append(record)
+        self._save()
+
+    def update_client_file(self, file_id: str, **changes) -> Optional[dict]:
+        record = self.get_client_file(file_id)
+        if record is not None:
+            record.update(changes)
+            self._save()
+        return record
+
+    def delete_client_file(self, file_id: str) -> Optional[dict]:
+        files = self._data.setdefault("client_files", [])
+        record = self.get_client_file(file_id)
+        if record is not None:
+            files.remove(record)
+            self._save()
+        return record
+
     def get_invoice_dicts(self) -> list[dict]:
         return [dict(d) for d in self._data.get("invoices", [])]
 
@@ -368,7 +403,13 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
     def dashboard():
         stats = metadata.get_dashboard_stats()
         wallets = metadata.get_saved_wallets()
-        return render_template("index.html", stats=stats, wallets=wallets)
+        client_files = metadata.get_client_files()
+        recon = {
+            "last_run": metadata.get_reconciliation_state().get("last_run"),
+            "client_file_count": len(client_files),
+            "client_files_ready": sum(1 for f in client_files if f.get("status") == "ready"),
+        }
+        return render_template("index.html", stats=stats, wallets=wallets, recon=recon)
 
     @app.route("/api/stats")
     def get_stats():
@@ -540,12 +581,34 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
 
     recon_service = ReconciliationService(data_dir=data_dir, exports_dir=metadata.exports_dir)
 
+    def _load_client_records() -> tuple[list[dict], list[dict], dict[str, str]]:
+        """Parse every mapped client file into records (ledger/exchange) and receivables."""
+        records, receivables, wallets = [], [], {}
+        for f in metadata.get_client_files():
+            if f.get("status") != "ready":
+                continue
+            path = metadata.client_files_dir / f["stored_name"]
+            if not path.exists():
+                continue
+            parsed = parse_file(f["stored_name"], path.read_bytes())
+            mapped = apply_mapping(f["id"], f["file_type"], parsed, f.get("mapping", {}))
+            for rec in mapped.records:
+                rec["file_name"] = f["original_name"]
+            if f["file_type"] == "receivables":
+                receivables.extend(mapped.records)
+            else:
+                records.extend(mapped.records)
+            if f.get("wallet_address"):
+                wallets[f["id"]] = f["wallet_address"]
+        return records, receivables, wallets
+
     def _run_reconciliation(inputs: dict, settings: dict) -> dict:
         blockchain = inputs["network"]
         own_wallets = sorted(
             metadata.get_self_custodial_addresses(blockchain)
             | {a.lower() for a in inputs["wallet_addresses"]}
         )
+        client_records, receivables, file_wallets = _load_client_records()
         report, files = recon_service.run(
             inputs=inputs,
             own_wallets=own_wallets,
@@ -555,6 +618,11 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
             time_window_hours=float(settings.get("time_window_hours", 2)),
             invoice_tolerance_pct=Decimal(str(settings.get("invoice_tolerance_pct", "0.5"))),
             include_prices=bool(settings.get("include_prices", False)),
+            client_records=client_records,
+            receivables=receivables,
+            file_wallets=file_wallets,
+            record_tolerance_pct=Decimal(str(settings.get("record_tolerance_pct", "0.5"))),
+            date_window_days=int(settings.get("date_window_days", 3)),
         )
         result = report.to_dict()
         result["success"] = True
@@ -568,7 +636,24 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
             {"id": i["id"], "invoice_number": i.get("invoice_number", ""),
              "token_type": i.get("token_type", ""), "crypto_amount": i.get("crypto_amount")}
             for i in metadata.get_invoice_dicts() if i.get("status") != "cancelled"
+        ] + [
+            {"id": r["id"], "invoice_number": f"{r['invoice_number']} (client file)",
+             "token_type": r["token_type"], "crypto_amount": r["crypto_amount"]}
+            for r in receivables
         ]
+        result["client_files_used"] = [
+            {"id": f["id"], "name": f["original_name"], "file_type": f["file_type"]}
+            for f in metadata.get_client_files() if f.get("status") == "ready"
+        ]
+        metadata.set_last_reconciliation({
+            "generated_at": result["generated_at"],
+            "network": blockchain,
+            "period_start": result["period_start"],
+            "period_end": result["period_end"],
+            "summary": result["summary"],
+            "download_csv": result["download_csv"],
+            "download_xlsx": result["download_xlsx"],
+        })
         return result
 
     @app.route("/reconciliation")
@@ -607,6 +692,8 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
                 "time_window_hours": float(data.get("time_window_hours") or 2),
                 "invoice_tolerance_pct": str(Decimal(str(data.get("invoice_tolerance_pct") or "0.5"))),
                 "include_prices": bool(data.get("include_prices", False)),
+                "record_tolerance_pct": str(Decimal(str(data.get("record_tolerance_pct") or "0.5"))),
+                "date_window_days": int(data.get("date_window_days") or 3),
             }
             inputs = fetch_inputs(blockchain, wallet_addresses, api_key, period_start, period_end)
             recon_service.save_cache(inputs, settings)
@@ -689,13 +776,149 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
         return jsonify({"success": True, "count": len(hashes)})
 
     # -------------------------------------------------------------------------
+    # Client File Routes (CSV/Excel supplied by a client)
+    # -------------------------------------------------------------------------
+
+    app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB uploads
+
+    def _client_file_view(record: dict, parsed=None) -> dict:
+        view = {k: v for k, v in record.items() if k != "stored_name"}
+        if parsed is not None:
+            view["headers"] = parsed.headers
+            view["preview"] = [{h: r.get(h, "") for h in parsed.headers} for r in parsed.rows[:5]]
+        view["fields"] = {
+            name: {"label": label, "required": required}
+            for name, (label, required) in MAPPING_FIELDS[record["file_type"]].items()
+        }
+        return view
+
+    def _read_client_file(record: dict):
+        path = metadata.client_files_dir / record["stored_name"]
+        return parse_file(record["stored_name"], path.read_bytes())
+
+    @app.route("/client-files")
+    def client_files_page():
+        return render_template(
+            "client_files.html",
+            files=metadata.get_client_files(),
+            file_types=FILE_TYPES,
+            date_formats=DATE_FORMATS,
+            wallets=metadata.get_saved_wallets(),
+        )
+
+    @app.route("/client-files/api/list")
+    def list_client_files():
+        return jsonify([_client_file_view(f) for f in metadata.get_client_files()])
+
+    @app.route("/client-files/api/upload", methods=["POST"])
+    def upload_client_file():
+        upload = request.files.get("file")
+        file_type = request.form.get("file_type", "")
+        if not upload or not upload.filename:
+            return jsonify({"error": "Choose a file to upload"}), 400
+        if file_type not in FILE_TYPES:
+            return jsonify({"error": "Choose what kind of file this is"}), 400
+        original = os.path.basename(upload.filename.replace("\\", "/"))
+        ext = os.path.splitext(original)[1].lower()
+        if ext not in (".csv", ".xlsx", ".txt"):
+            return jsonify({"error": "Only .csv and .xlsx files are supported (PDF is not)"}), 400
+        content = upload.read()
+        try:
+            parsed = parse_file(original, content)
+        except ImportErrorWithRows as e:
+            return jsonify({"error": str(e)}), 400
+
+        file_id = uuid.uuid4().hex[:10]
+        stored_name = f"{file_id}{ext}"
+        (metadata.client_files_dir / stored_name).write_bytes(content)
+        record = {
+            "id": file_id,
+            "original_name": original,
+            "stored_name": stored_name,
+            "file_type": file_type,
+            "uploaded_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "row_count": len(parsed.rows),
+            "mapping": suggest_mapping(file_type, parsed.headers),
+            "wallet_address": (request.form.get("wallet_address") or "").strip(),
+            "status": "needs mapping",
+            "record_count": 0,
+            "error_count": 0,
+        }
+        metadata.add_client_file(record)
+        recon_overrides.log_event(
+            metadata.get_reconciliation_state(), "upload client file",
+            f"{original} as {FILE_TYPES[file_type]} ({len(parsed.rows)} rows), id {file_id}",
+        )
+        metadata.save_reconciliation_state()
+        return jsonify(_client_file_view(record, parsed))
+
+    @app.route("/client-files/api/<file_id>")
+    def get_client_file(file_id: str):
+        record = metadata.get_client_file(file_id)
+        if record is None:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify(_client_file_view(record, _read_client_file(record)))
+
+    @app.route("/client-files/api/<file_id>/mapping", methods=["PUT"])
+    def save_client_file_mapping(file_id: str):
+        record = metadata.get_client_file(file_id)
+        if record is None:
+            return jsonify({"error": "Not found"}), 404
+        data = request.get_json() or {}
+        mapping = {k: str(v).strip() for k, v in (data.get("mapping") or {}).items() if str(v).strip()}
+        parsed = _read_client_file(record)
+        result = apply_mapping(file_id, record["file_type"], parsed, mapping)
+        status = "ready" if result.records and not result.errors else (
+            "ready (with row errors)" if result.records else "needs mapping")
+        # Rows that fail to parse are reported, but a file with some usable rows can still be used.
+        usable = bool(result.records)
+        metadata.update_client_file(
+            file_id,
+            mapping=mapping,
+            wallet_address=(data.get("wallet_address") or "").strip(),
+            status="ready" if usable else "needs mapping",
+            record_count=len(result.records),
+            error_count=len(result.errors),
+        )
+        recon_overrides.log_event(
+            metadata.get_reconciliation_state(), "map client file",
+            f"{record['original_name']}: {', '.join(f'{k}={v}' for k, v in mapping.items())}; "
+            f"{len(result.records)} records, {len(result.errors)} row errors",
+        )
+        metadata.save_reconciliation_state()
+        return jsonify({
+            "success": usable,
+            "status": status,
+            "record_count": len(result.records),
+            "errors": result.errors[:50],
+            "error_count": len(result.errors),
+            "preview": result.records[:5],
+        })
+
+    @app.route("/client-files/api/<file_id>", methods=["DELETE"])
+    def delete_client_file(file_id: str):
+        record = metadata.delete_client_file(file_id)
+        if record is None:
+            return jsonify({"error": "Not found"}), 404
+        path = metadata.client_files_dir / record["stored_name"]
+        if path.exists():
+            path.unlink()
+        recon_overrides.log_event(
+            metadata.get_reconciliation_state(), "delete client file",
+            f"{record['original_name']} (id {file_id})",
+        )
+        metadata.save_reconciliation_state()
+        return jsonify({"success": True})
+
+    # -------------------------------------------------------------------------
     # Invoice Routes
     # -------------------------------------------------------------------------
 
     @app.route("/invoices")
     def invoices_page():
         invoices = metadata.get_invoices(limit=20)
-        return render_template("invoices.html", invoices=invoices)
+        stats = metadata.get_dashboard_stats()
+        return render_template("invoices.html", invoices=invoices, stats=stats)
 
     @app.route("/invoices/create")
     def create_invoice_page():

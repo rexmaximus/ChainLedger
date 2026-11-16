@@ -7,6 +7,7 @@ result as CSV (one file, sections in order) or Excel (one sheet per section).
 Sections:
 - Summary
 - Matched Transfers / Unmatched Transfer Legs / Network Fees
+- Client Records Matched / Client Records Unmatched / On-Chain Not In Ledger
 - Invoice Matching / Unmatched Payments
 - Balance Reconciliation
 - Exceptions (every item needing review, with its free-text note)
@@ -27,8 +28,9 @@ from typing import Optional
 
 from . import overrides as ov
 from .balance import BalanceReconciliation, reconcile_balance
-from .common import fmt_amount, parse_date, to_decimal, utc_now_iso
+from .common import fmt_amount, parse_date, row_id, to_decimal, utc_now_iso
 from .invoice_matching import PAID, InvoiceMatchResult, match_invoices_to_payments
+from .record_matching import RecordMatchResult, match_client_records
 from .transfer_matching import TransferMatchResult, match_own_transfers
 
 
@@ -54,6 +56,7 @@ class ReconciliationReport:
     exceptions: list[ExceptionItem] = field(default_factory=list)
     override_log: list[dict] = field(default_factory=list)
     active_overrides: list[dict] = field(default_factory=list)
+    records: RecordMatchResult = field(default_factory=RecordMatchResult)
 
     def summary(self) -> dict:
         statuses: dict[str, int] = {}
@@ -66,6 +69,12 @@ class ReconciliationReport:
             "invoices": len(self.invoices.invoice_matches),
             "invoice_statuses": statuses,
             "unmatched_payments": len(self.invoices.unmatched_payments),
+            "client_records_matched": len(self.records.matches),
+            "client_records_amount_differences": sum(1 for m in self.records.matches if not m.amount_ok),
+            "client_records_unmatched": len(self.records.unmatched_records),
+            "client_records_off_chain": len(self.records.off_chain_records),
+            "client_records_outside_period": self.records.outside_period,
+            "chain_rows_not_in_ledger": len(self.records.chain_not_in_ledger),
             "balances_checked": len(self.balances),
             "balances_reconciled": sum(1 for b in self.balances if b.reconciled),
             "exceptions": len(self.exceptions),
@@ -99,6 +108,10 @@ class ReconciliationReport:
                 for u in self.invoices.unmatched_payments
             ],
             "balances": [{**asdict(b), "reconciled": b.reconciled} for b in self.balances],
+            "record_matches": [asdict(m) for m in self.records.matches],
+            "unmatched_records": [{**u.record, "reason": u.reason} for u in self.records.unmatched_records],
+            "off_chain_records": self.records.off_chain_records,
+            "chain_not_in_ledger": [{"row_id": row_id(tx), **_tx_brief(tx)} for tx in self.records.chain_not_in_ledger],
             "exceptions": [asdict(e) for e in self.exceptions],
             "override_log": self.override_log,
             "active_overrides": self.active_overrides,
@@ -134,6 +147,13 @@ def build_report(
     time_window_hours: float = 2,
     invoice_tolerance_pct: Decimal = Decimal("0.5"),
     amount_tolerance: Decimal = Decimal("0.00000001"),
+    client_records: Optional[list[dict]] = None,
+    receivables: Optional[list[dict]] = None,
+    file_wallets: Optional[dict[str, str]] = None,
+    period_start=None,
+    period_end=None,
+    record_tolerance_pct: Decimal = Decimal("0.5"),
+    date_window_days: int = 3,
 ) -> ReconciliationReport:
     """
     Run transfer matching, invoice matching and balance reconciliation.
@@ -149,6 +169,12 @@ def build_report(
         time_window_hours: Window for amount-and-time transfer matching
         invoice_tolerance_pct: Invoice amount tolerance, percent of invoice amount
         amount_tolerance: Absolute tolerance for transfer amounts
+        client_records: Ledger/exchange records from uploaded client files
+        receivables: Invoice dicts from uploaded receivables files
+        file_wallets: file_id -> wallet a ledger file covers
+        period_start / period_end: Reconciliation period (client records outside it are skipped)
+        record_tolerance_pct: Amount tolerance for client records, percent
+        date_window_days: Date tolerance for client records
     """
     state = state if state is not None else ov.empty_state()
 
@@ -161,12 +187,28 @@ def build_report(
         excluded_row_ids=ov.unlinked_transfer_rows(state),
     )
 
+    record_result = match_client_records(
+        client_records or [],
+        transfers.transactions,
+        period_start=parse_date(period_start) if period_start else None,
+        period_end=parse_date(period_end) if period_end else None,
+        date_window_days=int(date_window_days),
+        tolerance_pct=Decimal(str(record_tolerance_pct)),
+        manual_matches=ov.manual_record_matches(state),
+        excluded_record_ids=ov.unmatched_record_ids(state),
+        file_wallets=file_wallets,
+    )
+
+    # Incoming rows explained by an exchange withdrawal are the client's own funds, not customer payments
+    exchange_rows = {m.row_id for m in record_result.matches if m.file_type == "exchange"}
+
     payments = [
         tx for tx in transfers.transactions
         if tx.get("direction") == "In" and tx.get("transaction_type") != "TRANSFER"
+        and row_id(tx) not in exchange_rows
     ]
     invoice_result = match_invoices_to_payments(
-        invoices,
+        list(invoices) + list(receivables or []),
         payments,
         tolerance_pct=invoice_tolerance_pct,
         manual_matches=ov.manual_invoice_matches(state),
@@ -203,12 +245,15 @@ def build_report(
             "time_window_hours": float(time_window_hours),
             "invoice_tolerance_pct": str(invoice_tolerance_pct),
             "amount_tolerance": str(amount_tolerance),
+            "client_record_tolerance_pct": str(record_tolerance_pct),
+            "client_record_date_window_days": int(date_window_days),
         },
         transfers=transfers,
         invoices=invoice_result,
         balances=balances,
         override_log=list(state.get("log", [])),
         active_overrides=[o for o in state.get("overrides", []) if o.get("active")],
+        records=record_result,
     )
     report.exceptions = _collect_exceptions(report, state)
     return report
@@ -246,6 +291,25 @@ def _collect_exceptions(report: ReconciliationReport, state: dict) -> list[Excep
                 m.asset, fmt_amount(m.invoice_amount),
                 f"Received {fmt_amount(m.amount_received)}, difference {fmt_amount(m.difference)}")
 
+    for u in report.records.unmatched_records:
+        rec = u.record
+        add(f"client_record:{rec['record_id']}", f"Client {rec.get('file_type', '')} line not matched on-chain",
+            rec.get("tx_hash") or rec.get("reference") or f"line {rec.get('line')}", rec["date"][:10],
+            rec.get("asset", ""), rec.get("amount", ""),
+            f"{u.reason}. File {rec.get('file_name', rec.get('file_id', ''))}, line {rec.get('line')}"
+            + (f": {rec['description']}" if rec.get("description") else ""))
+
+    for m in report.records.matches:
+        if not m.amount_ok:
+            add(f"client_amount:{m.record_id}", "Client record amount differs from chain", m.tx_hash,
+                m.record_date, m.asset, fmt_amount(m.difference),
+                f"Client {fmt_amount(m.record_amount)} vs chain {fmt_amount(m.chain_amount)}")
+
+    for tx in report.records.chain_not_in_ledger:
+        add(f"not_in_ledger:{row_id(tx)}", "On-chain transaction missing from client ledger",
+            tx.get("tx_hash", ""), tx.get("block_date", ""), tx.get("asset", ""), tx.get("amount_decimal", ""),
+            f"{'Received in' if tx.get('direction') == 'In' else 'Sent from'} wallet {tx.get('wallet_address', '')}")
+
     for b in report.balances:
         eid = f"balance:{b.network}:{b.wallet_address.lower()}:{b.period_start}:{b.period_end}"
         if b.difference is None:
@@ -280,6 +344,12 @@ def _sections(report: ReconciliationReport) -> list[tuple[str, list[str], list[l
     summary_rows += [[f"Invoices {k}", v] for k, v in sorted(s["invoice_statuses"].items())]
     summary_rows += [
         ["Unmatched incoming payments", s["unmatched_payments"]],
+        ["Client records matched to chain", s["client_records_matched"]],
+        ["Client records matched with amount differences", s["client_records_amount_differences"]],
+        ["Client records not found on-chain", s["client_records_unmatched"]],
+        ["Client exchange lines not expected on-chain (trades etc.)", s["client_records_off_chain"]],
+        ["Client records outside the period (skipped)", s["client_records_outside_period"]],
+        ["On-chain transactions missing from client ledger", s["chain_rows_not_in_ledger"]],
         ["Wallet balances checked", s["balances_checked"]],
         ["Wallet balances reconciled (difference = 0)", s["balances_reconciled"]],
         ["Exceptions", s["exceptions"]],
@@ -305,7 +375,7 @@ def _sections(report: ReconciliationReport) -> list[tuple[str, list[str], list[l
     ] for f in report.transfers.fee_lines]
 
     invoices = [[
-        m.invoice_number, m.invoice_date, m.asset, a(m.invoice_amount), a(m.amount_received),
+        m.source, m.invoice_number, m.customer, m.invoice_date, m.asset, a(m.invoice_amount), a(m.amount_received),
         a(m.difference), m.status, m.recorded_status, m.method,
         "yes" if m.payer_verified else "no", "; ".join(m.payment_tx_hashes),
     ] for m in report.invoices.invoice_matches]
@@ -324,6 +394,23 @@ def _sections(report: ReconciliationReport) -> list[tuple[str, list[str], list[l
         opt(b.expected_closing), opt(b.actual_closing), b.actual_source, opt(b.difference),
         "yes" if b.reconciled else "no",
     ] for b in report.balances]
+
+    record_matches = [[
+        m.file_type, m.record_id, m.method, m.asset, m.record_date, a(m.record_amount), m.chain_date,
+        a(m.chain_amount), a(m.difference), "yes" if m.amount_ok else "no", m.tx_hash,
+    ] for m in report.records.matches]
+
+    unmatched_records = [[
+        u.record.get("file_type", ""), u.record.get("file_name", u.record.get("file_id", "")),
+        u.record.get("line", ""), u.record["date"][:10], u.record.get("asset", ""), u.record.get("amount", ""),
+        u.record.get("chain_direction", ""), u.record.get("tx_hash", ""), u.record.get("reference", ""),
+        u.record.get("description", ""), u.reason,
+    ] for u in report.records.unmatched_records]
+
+    not_in_ledger = [[
+        tx.get("block_date", ""), tx.get("wallet_address", ""), tx.get("tx_hash", ""), tx.get("direction", ""),
+        tx.get("asset", ""), tx.get("amount_decimal", ""), tx.get("tx_fee_native", ""),
+    ] for tx in report.records.chain_not_in_ledger]
 
     exceptions = [[
         e.exception_id, e.category, e.reference, e.date, e.asset, e.amount, e.detail, e.note,
@@ -349,13 +436,24 @@ def _sections(report: ReconciliationReport) -> list[tuple[str, list[str], list[l
             "Fee (USD)", "Fee (CAD)", "Transaction Type", "Description",
         ], fees),
         ("Invoice Matching", [
-            "Invoice Number", "Invoice Date", "Asset", "Invoice Amount", "Amount Received",
+            "Source", "Invoice Number", "Customer", "Invoice Date", "Asset", "Invoice Amount", "Amount Received",
             "Difference", "Matched Status", "Status In Invoice List", "Match Method",
             "Payer Verified", "Payment Tx Hashes",
         ], invoices),
         ("Unmatched Payments", [
             "Date", "Wallet", "Tx Hash", "From Address", "Asset", "Amount", "Reason",
         ], payments),
+        ("Client Records Matched", [
+            "File Type", "Record ID", "Match Method", "Asset", "Client Date", "Client Amount", "Chain Date",
+            "Chain Amount", "Difference (Chain - Client)", "Amount Within Tolerance", "Tx Hash",
+        ], record_matches),
+        ("Client Records Unmatched", [
+            "File Type", "File", "Line", "Date", "Asset", "Amount", "Expected Direction", "Tx Hash",
+            "Reference", "Description", "Reason",
+        ], unmatched_records),
+        ("On-Chain Not In Ledger", [
+            "Date", "Wallet", "Tx Hash", "Direction", "Asset", "Amount", "Fee",
+        ], not_in_ledger),
         ("Balance Reconciliation", [
             "Wallet", "Network", "Asset", "Period Start", "Period End", "Opening Balance",
             "Opening Source", "Inflows", "Outflows", "Network Fees", "Expected Closing",

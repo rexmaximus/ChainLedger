@@ -138,11 +138,12 @@ It's designed for desktop use.
 
 ## Limited Reconciliation
 
-The reconciliation layer compares on-chain data with itself and with ChainLedger's own invoices. It does not:
+The reconciliation layer compares on-chain data with client CSV/Excel files, with invoices, and with itself. It does not:
 
-- Import exchange statements (CSV) or exchange account balances
-- Import bank statements
-- Import from or post to QuickBooks, Xero or any other ledger
+- Reconcile bank statements
+- Read PDF files
+- Connect to QuickBooks, Xero or any other ledger, or post entries to one (CSV exports can be uploaded)
+- Reconcile exchange account balances (only the deposit and withdrawal lines in an exchange history)
 - Reconcile ERC-20 token balances (only native ETH and BTC)
 - Fetch historical Bitcoin balances (Blockstream only reports the current balance; past balances must be entered manually)
 

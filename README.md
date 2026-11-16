@@ -1,14 +1,14 @@
-NOTE: Wallet fetching, classification, exports, invoices and a first reconciliation layer (own-wallet transfer matching, invoice-to-payment matching, native ETH/BTC balance checks) are implemented. Exchange CSV import and bank or QuickBooks/Xero ledger import are not.
+NOTE: Implemented: wallet fetching, classification, exports, a reconciliation layer (client CSV/Excel files, own-wallet transfers and invoice payments matched to on-chain data, native ETH/BTC balance checks) and freelancer invoicing. Not implemented: bank statement reconciliation, PDF import, direct QuickBooks/Xero connections, ERC-20 balance checks.
 
 # ChainLedger
 
-Local-first crypto accounting for freelancers and independent contractors.
+Local-first crypto reconciliation and accounting, for accountants working with clients' crypto records and for crypto-paid freelancers.
 
 ---
 
 ## What is ChainLedger?
 
-ChainLedger is a simple, local-only tool that helps crypto-paid freelancers generate clean accounting records. It fetches your wallet transactions, classifies them, and produces accountant-friendly exports.
+ChainLedger is a simple, local-only tool for checking crypto records against the blockchain. An accountant can upload the records a client provides (a ledger export, an exchange history, a receivables list) and reconcile them against the client's on-chain wallet activity. It also fetches and classifies wallet transactions for accountant-friendly exports, and includes invoicing tools for crypto-paid freelancers.
 
 **No accounts. No cloud. Your data stays on your machine.**
 
@@ -16,6 +16,7 @@ ChainLedger is a simple, local-only tool that helps crypto-paid freelancers gene
 
 ## Who is this for?
 
+- Accountants and bookkeepers reconciling a client's crypto wallet activity against the client's records
 - Freelancers paid in cryptocurrency (ETH, BTC, USDC, etc.)
 - Independent contractors who need to track crypto income
 - Anyone who wants clean transaction records without complex software
@@ -47,9 +48,10 @@ Generate CSV or Excel files with:
 Create PDF invoices for your crypto payments with auto-generated invoice numbers and optional fiat equivalents.
 
 ### 6. Reconciliation
-Check your on-chain records against themselves and against your ChainLedger invoices:
+Check records against on-chain wallet activity:
+- **Client files**: upload a client's ledger / GL export, exchange history or receivables list (CSV or Excel), map its columns, and match each line to on-chain transactions; lines not found on-chain, amount differences and on-chain transactions missing from the ledger are reported
 - **Own-wallet transfers**: pair the outgoing and incoming sides of a move between your wallets, mark both as TRANSFER, and record the network fee as its own expense line
-- **Invoice payments**: match incoming payments to invoices as paid, partially paid, overpaid or unpaid; unmatched payments go on an exceptions list
+- **Invoice payments**: match incoming payments to invoices (uploaded receivables or ChainLedger invoices) as paid, partially paid, overpaid or unpaid; unmatched payments go on an exceptions list
 - **Wallet balances**: opening balance + transactions − fees compared with the actual closing balance from the chain (native ETH/BTC only)
 - **Report**: Excel and CSV with matched and unmatched items, differences, a note per exception, and a timestamped log of manual overrides
 
@@ -112,14 +114,16 @@ python -m pytest
 | **Classification** | Auto-classify as INCOME/EXPENSE/TRANSFER with manual override support |
 | **Fiat Valuation** | Historical USD/CAD values via CoinGecko |
 | **Excel/CSV Export** | Accountant-ready spreadsheets with summaries |
-| **PDF Invoices** | Professional invoices with auto-numbering |
+| **PDF Invoices** (Freelancer Tools) | Professional invoices with auto-numbering |
+| **Client File Import** | Upload CSV/Excel ledger exports, exchange histories and receivables lists, with column mapping and per-row error reporting (no PDF) |
+| **Client Record Matching** | Matches client file lines to on-chain transactions by tx hash, or amount and date; reports unmatched lines, amount differences and on-chain transactions missing from the ledger |
 | **Own-Wallet Transfer Matching** | Pairs outgoing/incoming rows between your wallets (same txid, or amount and time window); fee recorded as a separate expense line |
-| **Invoice-to-Payment Matching** | Paid / partially paid / overpaid / unpaid per invoice; unmatched payments listed as exceptions |
+| **Invoice-to-Payment Matching** | Paid / partially paid / overpaid / unpaid per invoice (uploaded receivables or ChainLedger invoices); unmatched payments listed as exceptions |
 | **Balance Reconciliation** | Expected vs actual closing balance per wallet for native ETH (historical, via Alchemy) and BTC (current balance, or a manually entered one) |
 | **Reconciliation Report** | Excel/CSV report with exception notes and a timestamped override log |
 | **Local Storage** | All data stored in local JSON files |
 
-Not implemented yet: exchange CSV import, bank statement import, QuickBooks/Xero ledger import, ERC-20 token balance reconciliation.
+Not implemented yet: bank statement reconciliation, PDF import, direct QuickBooks/Xero connections or preset formats (their CSV exports can be uploaded through column mapping), presets for specific exchanges, ERC-20 token balance reconciliation.
 
 ---
 
@@ -137,6 +141,7 @@ ChainLedger/
 │   ├── wallet/           # Transaction fetching
 │   ├── classification/   # Transaction classification logic
 │   ├── exports/          # CSV/Excel report generation
+│   ├── imports/          # Client CSV/Excel file import and column mapping
 │   ├── invoices/         # PDF invoice generation
 │   ├── reconciliation/   # Transfer, invoice and balance reconciliation
 │   └── ui/               # Flask web interface
@@ -152,7 +157,7 @@ ChainLedger/
 
 - [Accounting Notes](docs/accounting-notes.md): Why the accounting logic works the way it does
 - [Design Decisions](docs/design-decisions.md): Key architectural choices
-- [Reconciliation](docs/reconciliation.md): How transfers, invoice payments and balances are reconciled
+- [Reconciliation](docs/reconciliation.md): How client files, transfers, invoice payments and balances are reconciled
 - [Limitations](docs/limitations.md): What this tool explicitly does not handle
 
 ---

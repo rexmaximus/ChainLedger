@@ -72,3 +72,46 @@ def test_run_override_note_and_downloads(client):
 
 def test_rerun_without_previous_run_is_an_error(client):
     assert client.post("/reconciliation/api/rerun").status_code == 400
+
+
+def test_dashboard_and_freelancer_pages(client):
+    home = client.get("/")
+    assert home.status_code == 200 and b"No reconciliation run yet" in home.data
+    run(client)
+    home = client.get("/")
+    assert b"Last Reconciliation" in home.data and b"Open Exceptions" in home.data
+    freelancer = client.get("/invoices")
+    assert b"Freelancer Tools" in freelancer.data and b"Total Invoices" in freelancer.data
+
+
+def test_client_file_upload_mapping_and_run(client):
+    from pathlib import Path
+    import io
+    path = Path(__file__).parent.parent / "examples" / "client_files" / "client_ledger.csv"
+
+    bad = client.post("/client-files/api/upload", data={"file_type": "ledger",
+                      "file": (io.BytesIO(b"%PDF"), "statement.pdf")}, content_type="multipart/form-data")
+    assert bad.status_code == 400
+
+    up = client.post("/client-files/api/upload", data={"file_type": "ledger",
+                     "file": (io.BytesIO(path.read_bytes()), "client_ledger.csv")}, content_type="multipart/form-data")
+    info = up.get_json()
+    assert up.status_code == 200, info
+    assert info["mapping"]["debit"] == "Debit" and len(info["preview"]) == 5
+    assert client.get("/client-files").status_code == 200
+
+    mapping = dict(info["mapping"], date_format="mdy")
+    saved = client.put(f"/client-files/api/{info['id']}/mapping",
+                       json={"mapping": mapping, "wallet_address": HOT}).get_json()
+    assert saved["success"] and saved["record_count"] == 7 and saved["error_count"] == 0
+
+    data = run(client).get_json()
+    assert data["summary"]["client_records_matched"] == 5
+    assert data["summary"]["chain_rows_not_in_ledger"] == 1
+    assert data["client_files_used"][0]["name"] == "client_ledger.csv"
+
+    actions = [e["action"] for e in data["override_log"]]
+    assert actions[:2] == ["upload client file", "map client file"]
+
+    assert client.delete(f"/client-files/api/{info['id']}").get_json()["success"]
+    assert client.get("/client-files/api/list").get_json() == []

@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
     <h1>Reconciliation</h1>
-    <p class="subtitle">Match transfers between your wallets, match payments to invoices, and check wallet balances</p>
+    <p class="subtitle">Match client records and invoices to on-chain transactions, pair transfers between wallets, and check wallet balances</p>
 </div>
 
 <div class="card">
@@ -64,6 +64,20 @@
             </div>
         </div>
 
+        <div class="form-row">
+            <div class="form-group">
+                <label for="recordTolerance">Client record amount tolerance (%)</label>
+                <input type="number" id="recordTolerance" value="0.5" min="0" step="0.1">
+            </div>
+            <div class="form-group">
+                <label for="dateWindow">Client record date window (days)</label>
+                <input type="number" id="dateWindow" value="3" min="0" step="1">
+                <small class="form-hint">How far a client file date may be from the on-chain date</small>
+            </div>
+        </div>
+
+        <p class="text-muted" id="clientFilesNote">Mapped files from <a href="/client-files">Client Files</a> are included automatically.</p>
+
         <div class="form-group">
             <div class="checkbox-group">
                 <label class="checkbox-label">
@@ -104,6 +118,9 @@
     </div>
 
     <div class="section"><h2>Exceptions</h2><div class="card recon-scroll" id="exceptions"></div></div>
+    <div class="section"><h2>Client Records Not Found On-Chain</h2><div class="card recon-scroll" id="unmatchedRecords"></div></div>
+    <div class="section"><h2>On-Chain Transactions Missing From Client Ledger</h2><div class="card recon-scroll" id="notInLedger"></div></div>
+    <div class="section"><h2>Client Records Matched</h2><div class="card recon-scroll" id="recordMatches"></div></div>
     <div class="section"><h2>Wallet Balances</h2><div class="card recon-scroll" id="balances"></div></div>
     <div class="section"><h2>Own-Wallet Transfers</h2><div class="card recon-scroll" id="transfers"></div></div>
     <div class="section"><h2>Unmatched Transfer Legs</h2><div class="card recon-scroll" id="unmatchedLegs"></div></div>
@@ -179,6 +196,8 @@ async function runReconciliation(event) {
             period_end: document.getElementById('periodEnd').value,
             time_window_hours: document.getElementById('timeWindow').value,
             invoice_tolerance_pct: document.getElementById('tolerance').value,
+            record_tolerance_pct: document.getElementById('recordTolerance').value,
+            date_window_days: document.getElementById('dateWindow').value,
             include_prices: document.getElementById('includePrices').checked,
         }));
     } catch (e) { showError(e.message); }
@@ -225,8 +244,9 @@ function statusClass(s) { return s === 'paid' ? 'status-paid' : (s === 'unpaid' 
 function render(r) {
     report = r;
     document.getElementById('results').style.display = 'block';
+    const filesUsed = (r.client_files_used || []).map(f => f.name).join(', ') || 'none';
     document.getElementById('runInfo').textContent =
-        `${r.network} · ${r.period_start} to ${r.period_end} · fetched ${r.fetched_at} · report generated ${r.generated_at}`;
+        `${r.network} · ${r.period_start} to ${r.period_end} · fetched ${r.fetched_at} · report generated ${r.generated_at} · client files: ${filesUsed}`;
     document.getElementById('dlCsv').href = r.download_csv;
     document.getElementById('dlXlsx').href = r.download_xlsx;
 
@@ -238,6 +258,11 @@ function render(r) {
         ['Network fee expense lines', s.network_fee_lines],
         ['Invoices', `${s.invoices} (${statuses})`],
         ['Unmatched incoming payments', s.unmatched_payments],
+        ['Client records matched to chain', `${s.client_records_matched} (${s.client_records_amount_differences} with amount differences)`],
+        ['Client records not found on-chain', s.client_records_unmatched],
+        ['On-chain transactions missing from client ledger', s.chain_rows_not_in_ledger],
+        ['Client exchange lines not expected on-chain', s.client_records_off_chain],
+        ['Client records outside the period (skipped)', s.client_records_outside_period],
         ['Balances reconciled', `${s.balances_reconciled} of ${s.balances_checked}`],
         ['Exceptions to review', s.exceptions],
     ].map(([k, v]) => `<tr><td>${esc(k)}</td><td><strong>${esc(v)}</strong></td></tr>`).join('');
@@ -287,6 +312,35 @@ function render(r) {
             ];
         }));
 
+    const missing = r.chain_not_in_ledger;
+    const missingOptions = missing.map(t => `<option value="${esc(t.row_id)}">${esc(t.date)} · ${esc(t.direction)} ${esc(t.amount)} ${esc(t.asset)} · ${esc(short(t.tx_hash))}</option>`).join('');
+    document.getElementById('unmatchedRecords').innerHTML = table(
+        ['File', 'Line', 'Date', 'Asset', 'Amount', 'Expected', 'Tx / Ref', 'Description', 'Reason', 'Match to on-chain'],
+        r.unmatched_records.map((u, i) => [
+            td(u.file_name), td(u.line), td(String(u.date).slice(0, 10)), td(u.asset), td(u.amount),
+            td(u.chain_direction === 'In' ? 'into wallet' : (u.chain_direction === 'Out' ? 'out of wallet' : '—')),
+            td(short(u.tx_hash || u.reference), 'mono'), td(u.description), td(u.reason),
+            tdHtml((missingOptions ? `<select id="rec${i}">${missingOptions}</select>
+                <button class="btn btn-small" onclick="addOverride('match_record', {record_id: report.unmatched_records[${i}].record_id, row_id: document.getElementById('rec${i}').value}, 'Why this line is that transaction')">Match</button>` : '')
+                + `<button class="btn btn-small" onclick="addOverride('unmatch_record', {record_id: report.unmatched_records[${i}].record_id}, 'Why this line should stay unmatched')">Keep unmatched</button>`),
+        ]));
+
+    document.getElementById('notInLedger').innerHTML = table(
+        ['Date', 'Wallet', 'Tx', 'Direction', 'Asset', 'Amount', 'Fee'],
+        missing.map(t => [
+            td(t.date), td(short(t.wallet_address), 'mono'), td(short(t.tx_hash), 'mono'), td(t.direction),
+            td(t.asset), td(t.amount), td(t.fee),
+        ]));
+
+    document.getElementById('recordMatches').innerHTML = table(
+        ['File type', 'Method', 'Client date', 'Client amount', 'Chain date', 'Chain amount', 'Difference', 'Within tolerance', 'Tx', ''],
+        r.record_matches.map((m, i) => [
+            td(m.file_type), td(m.method), td(m.record_date), td(`${m.record_amount} ${m.asset}`), td(m.chain_date),
+            td(m.chain_amount), td(m.difference), td(m.amount_ok ? 'yes' : 'no', m.amount_ok ? 'status-paid' : 'status-bad'),
+            td(short(m.tx_hash), 'mono'),
+            tdHtml(`<button class="btn btn-small" onclick="addOverride('unmatch_record', {record_id: report.record_matches[${i}].record_id}, 'Why this match is wrong')">Unmatch</button>`),
+        ]));
+
     document.getElementById('fees').innerHTML = table(
         ['Transfer', 'Date', 'Wallet', 'Tx', 'Fee', 'USD', 'CAD'],
         r.fee_lines.map(f => [
@@ -296,9 +350,9 @@ function render(r) {
         ]));
 
     document.getElementById('invoices').innerHTML = table(
-        ['Invoice', 'Date', 'Amount', 'Received', 'Difference', 'Status', 'Invoice list status', 'Method', 'Payer verified', 'Payments'],
+        ['Source', 'Invoice', 'Customer', 'Date', 'Amount', 'Received', 'Difference', 'Status', 'Invoice list status', 'Method', 'Payer verified', 'Payments'],
         r.invoices.map(m => [
-            td(m.invoice_number), td(m.invoice_date), td(`${m.invoice_amount} ${m.asset}`), td(m.amount_received),
+            td(m.source), td(m.invoice_number), td(m.customer), td(m.invoice_date), td(`${m.invoice_amount} ${m.asset}`), td(m.amount_received),
             td(m.difference), td(m.status, statusClass(m.status)), td(m.recorded_status), td(m.method || '—'),
             td(m.payer_verified ? 'yes' : 'no'),
             tdHtml(m.payment_row_ids.map((pid, k) => `<div class="mono">${esc(short(m.payment_tx_hashes[k]))}

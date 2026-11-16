@@ -2,7 +2,7 @@ CHAINLEDGER RECONCILIATION REPORT
 
 SUMMARY
 Item,Value
-Generated at (UTC),2026-11-15T23:37:43+00:00
+Generated at (UTC),2026-11-16T00:20:36+00:00
 Own wallets,"0x1111111111111111111111111111111111111111, 0x2222222222222222222222222222222222222222"
 Transfer time window (hours),2.0
 Invoice amount tolerance (%),0.5
@@ -14,6 +14,12 @@ Invoices paid,1
 Invoices partially paid,1
 Invoices unpaid,1
 Unmatched incoming payments,1
+Client records matched to chain,0
+Client records matched with amount differences,0
+Client records not found on-chain,0
+Client exchange lines not expected on-chain (trades etc.),0
+Client records outside the period (skipped),0
+On-chain transactions missing from client ledger,0
 Wallet balances checked,2
 Wallet balances reconciled (difference = 0),1
 Exceptions,4
@@ -32,14 +38,26 @@ Transfer ID,Date,Time,Wallet,Tx Hash,Network,Asset,Fee Amount,Fee (USD),Fee (CAD
 TR-0001,2024-03-05,09:00:00,0x1111111111111111111111111111111111111111,0xmove1,Ethereum,ETH,0.0021,,,EXPENSE,Network fee on own-wallet transfer
 
 INVOICE MATCHING
-Invoice Number,Invoice Date,Asset,Invoice Amount,Amount Received,Difference,Matched Status,Status In Invoice List,Match Method,Payer Verified,Payment Tx Hashes
-INV-00001,2024-03-01,ETH,2,2,0,paid,unpaid,exact_amount,yes,0xpay1
-INV-00002,2024-03-08,ETH,1,0.6,-0.4,partially paid,unpaid,payer_accumulated,yes,0xpay2a; 0xpay2b
-INV-00003,2024-03-25,ETH,0.75,0,-0.75,unpaid,unpaid,,no,
+Source,Invoice Number,Customer,Invoice Date,Asset,Invoice Amount,Amount Received,Difference,Matched Status,Status In Invoice List,Match Method,Payer Verified,Payment Tx Hashes
+ChainLedger invoice,INV-00001,Client A,2024-03-01,ETH,2,2,0,paid,unpaid,exact_amount,yes,0xpay1
+ChainLedger invoice,INV-00002,Client B,2024-03-08,ETH,1,0.6,-0.4,partially paid,unpaid,payer_accumulated,yes,0xpay2a; 0xpay2b
+ChainLedger invoice,INV-00003,Client C,2024-03-25,ETH,0.75,0,-0.75,unpaid,unpaid,,no,
 
 UNMATCHED PAYMENTS
 Date,Wallet,Tx Hash,From Address,Asset,Amount,Reason
 2024-03-20,0x1111111111111111111111111111111111111111,0xmystery,0xdddd,ETH,0.05,No invoice matches this payment
+
+CLIENT RECORDS MATCHED
+File Type,Record ID,Match Method,Asset,Client Date,Client Amount,Chain Date,Chain Amount,Difference (Chain - Client),Amount Within Tolerance,Tx Hash
+(none)
+
+CLIENT RECORDS UNMATCHED
+File Type,File,Line,Date,Asset,Amount,Expected Direction,Tx Hash,Reference,Description,Reason
+(none)
+
+ON-CHAIN NOT IN LEDGER
+Date,Wallet,Tx Hash,Direction,Asset,Amount,Fee
+(none)
 
 BALANCE RECONCILIATION
 Wallet,Network,Asset,Period Start,Period End,Opening Balance,Opening Source,Inflows,Outflows,Network Fees,Expected Closing,Actual Closing,Actual Source,Difference (Actual - Expected),Reconciled
@@ -55,4 +73,4 @@ balance:Ethereum:0x1111111111111111111111111111111111111111:2024-03-01:2024-03-3
 
 OVERRIDE LOG
 Timestamp (UTC),Action,Override ID,Details,Note
-2026-11-15T23:37:43+00:00,note,,exception invoice:inv-2,Client B confirmed the remaining 0.4 ETH will be sent in April
+2026-11-16T00:20:36+00:00,note,,exception invoice:inv-2,Client B confirmed the remaining 0.4 ETH will be sent in April
