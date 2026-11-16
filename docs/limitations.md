@@ -142,7 +142,8 @@ The reconciliation layer compares on-chain data with client CSV/Excel files, wit
 - Connect to QuickBooks, Xero or any other ledger, or post entries to one (CSV exports can be uploaded)
 - Reconcile exchange account balances (only the deposit and withdrawal lines in an exchange history)
 - Reconcile balances of tokens outside the nine supported ERC-20 tokens
-- Fetch historical Bitcoin balances (Blockstream only reports the current balance; past balances must be entered manually)
+- Fetch a historical Bitcoin closing balance (Blockstream only reports the current balance; the opening balance is computed from the wallet's history, but a closing balance for a past period must be entered manually)
+- Handle Bitcoin multisig, Taproot (bc1p) or descriptor wallets (a single-signature xpub/ypub/zpub key or a plain address only)
 
 Amount-and-time transfer matches are heuristics and are flagged for review. See [reconciliation.md](reconciliation.md).
 

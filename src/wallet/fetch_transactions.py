@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,6 +17,8 @@ from decimal import Decimal
 from typing import Optional
 
 import httpx
+
+from .hd_keys import ADDRESS_TYPES, looks_like_extended_key, parse_extended_key, validate_extended_key
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,9 @@ class LedgerRow:
     tx_status: str  # "Success" or "Failed"
     category: str  # "Incoming Transfer", "Outgoing Transfer", etc.
     notes: str  # Additional context
+    # Bitcoin wallets given as an extended key: the wallet's own addresses this
+    # transaction touched (comma-separated). Empty for single addresses.
+    wallet_addresses: str = ""
 
 
 SUPPORTED_NETWORKS = {
@@ -83,6 +89,13 @@ def validate_bitcoin_address(address: str) -> bool:
         r"^bc1[a-zA-HJ-NP-Z0-9]{39,59}$",  # Bech32
     ]
     return any(re.match(p, address) for p in patterns)
+
+
+def validate_bitcoin_wallet(text: str) -> bool:
+    """A Bitcoin address, or an extended public key (xpub/ypub/zpub) for a whole wallet."""
+    if looks_like_extended_key(text or ""):
+        return validate_extended_key(text)
+    return validate_bitcoin_address(text)
 
 
 # =============================================================================
@@ -387,14 +400,144 @@ class EthereumFetcher(BlockchainFetcher):
 # Bitcoin Fetcher
 # =============================================================================
 
+def _sats_to_btc(sats: int) -> str:
+    """Satoshis as a plain BTC string (no scientific notation, e.g. 0.0000005)."""
+    value = Decimal(sats) / Decimal(100_000_000)
+    return format(value.normalize(), "f") if value else "0"
+
+
 class BitcoinFetcher(BlockchainFetcher):
-    """Fetch Bitcoin transactions via Blockstream API."""
+    """
+    Fetch Bitcoin transactions via the Blockstream API.
+
+    A wallet can be given as a single address or as an extended public key
+    (xpub/ypub/zpub). For a key, every receive and change address the wallet
+    has used is found (see _scan_wallet) and the addresses are treated as one
+    wallet: each transaction's amount is the net change across all of them, so
+    change returning to the wallet is not counted as sent.
+    """
 
     BASE_URL = "https://blockstream.info/api"
+    GAP_LIMIT = 20  # stop after this many unused addresses in a row (BIP44 standard)
+    MAX_ADDRESSES_PER_CHAIN = 5000  # safety stop for a runaway scan
 
     def __init__(self):
         """Initialize the fetcher."""
         self.client = httpx.Client(timeout=30.0)
+        self._wallets: dict[str, dict] = {}  # wallet text -> scan result
+        self._tx_cache: dict[str, list[dict]] = {}  # wallet text -> confirmed txs
+
+    # -- HTTP --------------------------------------------------------------
+
+    def _get_json(self, url: str):
+        """GET with a short backoff when Blockstream rate-limits (HTTP 429)."""
+        delay = 1.0
+        for attempt in range(5):
+            response = self.client.get(url)
+            if response.status_code != 429 or attempt == 4:
+                response.raise_for_status()
+                return response.json()
+            time.sleep(delay)
+            delay *= 2
+
+    # -- wallet addresses --------------------------------------------------
+
+    def _address_stats(self, address: str) -> dict:
+        return self._get_json(f"{self.BASE_URL}/address/{address}")
+
+    def _scan_wallet(self, wallet: str) -> dict:
+        """
+        The wallet's used addresses and their current confirmed stats.
+
+        For an extended key: walk the receive chain (0) and change chain (1),
+        stopping after GAP_LIMIT unused addresses in a row. An xpub does not
+        say which address type the wallet uses, so all three single-signature
+        types are scanned and the ones with any history are kept.
+        """
+        if wallet in self._wallets:
+            return self._wallets[wallet]
+        if not looks_like_extended_key(wallet):
+            # Totals are looked up only when a balance is needed (get_balance)
+            result = {"addresses": {wallet: None}, "address_types": [], "scanned": 1}
+            self._wallets[wallet] = result
+            return result
+
+        key = parse_extended_key(wallet)
+        types = [key.address_type] if key.address_type else list(ADDRESS_TYPES)
+        used: dict[str, dict] = {}
+        found_types = []
+        scanned = 0
+        for address_type in types:
+            type_used = 0
+            for chain in (0, 1):
+                chain_key = key.child(chain)
+                gap = index = 0
+                while gap < self.GAP_LIMIT:
+                    if index >= self.MAX_ADDRESSES_PER_CHAIN:
+                        raise RuntimeError(
+                            f"Stopped after {index} addresses on one chain; the wallet is too large to scan"
+                        )
+                    address = chain_key.child(index).address(address_type)
+                    stats = self._address_stats(address)
+                    scanned += 1
+                    count = (stats.get("chain_stats", {}).get("tx_count", 0)
+                             + stats.get("mempool_stats", {}).get("tx_count", 0))
+                    if count:
+                        used[address] = stats
+                        type_used += 1
+                        gap = 0
+                    else:
+                        gap += 1
+                    index += 1
+            if type_used:
+                found_types.append(address_type)
+        result = {"addresses": used, "address_types": found_types, "scanned": scanned}
+        self._wallets[wallet] = result
+        return result
+
+    def wallet_addresses(self, wallet: str) -> list[str]:
+        """The addresses that make up a wallet (just the address itself for a plain address)."""
+        return list(self._scan_wallet(wallet)["addresses"])
+
+    def wallet_summary(self, wallet: str) -> str:
+        """One line describing what was scanned, for notes and reports."""
+        scan = self._scan_wallet(wallet)
+        if not looks_like_extended_key(wallet):
+            return "single address"
+        types = ", ".join(ADDRESS_TYPES[t] for t in scan["address_types"]) or "none"
+        return (f"extended key: {len(scan['addresses'])} used addresses found "
+                f"({scan['scanned']} checked, gap limit {self.GAP_LIMIT}); address types: {types}")
+
+    # -- transactions ------------------------------------------------------
+
+    def _wallet_txs(self, wallet: str) -> list[dict]:
+        """Every confirmed transaction touching any of the wallet's addresses, once each."""
+        if wallet in self._tx_cache:
+            return self._tx_cache[wallet]
+        by_txid: dict[str, dict] = {}
+        for address in self.wallet_addresses(wallet):
+            for tx in self._fetch_confirmed_txs(address):
+                by_txid.setdefault(tx.get("txid", ""), tx)
+        txs = sorted(by_txid.values(), key=lambda t: (t.get("status", {}).get("block_time") or 0, t.get("txid", "")))
+        self._tx_cache[wallet] = txs
+        return txs
+
+    @staticmethod
+    def _net_flow(tx: dict, own: set[str]) -> tuple[int, int, list[str]]:
+        """(sats received by the wallet, sats spent from the wallet, own addresses touched)."""
+        total_in = total_out = 0
+        touched = []
+        for vin in tx.get("vin", []):
+            addr = (vin.get("prevout") or {}).get("scriptpubkey_address", "")
+            if addr.lower() in own:
+                total_out += vin["prevout"].get("value", 0)
+                touched.append(addr)
+        for vout in tx.get("vout", []):
+            addr = vout.get("scriptpubkey_address", "")
+            if addr.lower() in own:
+                total_in += vout.get("value", 0)
+                touched.append(addr)
+        return total_in, total_out, list(dict.fromkeys(touched))
 
     def fetch_transactions(
         self,
@@ -402,22 +545,18 @@ class BitcoinFetcher(BlockchainFetcher):
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
     ) -> list[LedgerRow]:
-        """Fetch all transactions for a Bitcoin wallet."""
+        """Fetch confirmed transactions for a Bitcoin address or extended public key."""
         rows = []
-        wallet_lower = wallet_address.lower()
+        is_key = looks_like_extended_key(wallet_address)
+        own = {a.lower() for a in self.wallet_addresses(wallet_address)}
 
-        transactions = self._fetch_confirmed_txs(wallet_address)
-
-        for tx in transactions:
+        for tx in self._wallet_txs(wallet_address):
             try:
-                # Get block time
                 block_time = tx.get("status", {}).get("block_time")
                 if not block_time:
                     continue
 
                 block_dt = datetime.fromtimestamp(block_time, tz=timezone.utc)
-
-                # Date filtering
                 if from_date and block_dt < from_date:
                     continue
                 if to_date and block_dt > to_date:
@@ -425,24 +564,11 @@ class BitcoinFetcher(BlockchainFetcher):
 
                 block_height = tx.get("status", {}).get("block_height", 0)
                 tx_id = tx.get("txid", "")
+                total_in, total_out, touched = self._net_flow(tx, own)
+                fee = tx.get("fee", 0)
 
-                # Calculate net flow for this wallet
-                total_in = 0
-                total_out = 0
-
-                # Check inputs (spending from our wallet = outgoing)
-                for vin in tx.get("vin", []):
-                    prevout = vin.get("prevout", {})
-                    if prevout.get("scriptpubkey_address", "").lower() == wallet_lower:
-                        total_out += prevout.get("value", 0)
-
-                # Check outputs (receiving to our wallet = incoming)
-                for vout in tx.get("vout", []):
-                    if vout.get("scriptpubkey_address", "").lower() == wallet_lower:
-                        total_in += vout.get("value", 0)
-
-                # Determine direction and amount
                 net = total_in - total_out
+                notes = []
                 if net > 0:
                     direction = "In"
                     amount_sats = net
@@ -450,13 +576,19 @@ class BitcoinFetcher(BlockchainFetcher):
                     direction = "Out"
                     # The net outflow includes the miner fee. Record the amount
                     # sent and the fee separately so the fee is not counted twice.
-                    amount_sats = abs(net) - tx.get("fee", 0)
+                    amount_sats = abs(net) - fee
+                    if amount_sats < 0:
+                        # The wallet did not pay the whole fee (e.g. a jointly funded tx)
+                        amount_sats, fee = 0, abs(net)
+                    if amount_sats == 0:
+                        notes.append("moved between this wallet's own addresses; only the fee left the wallet")
                 else:
                     continue  # No net change for this wallet
 
-                amount_btc = Decimal(amount_sats) / Decimal(100_000_000)
-                fee = tx.get("fee", 0)
-                fee_btc = Decimal(fee) / Decimal(100_000_000)
+                if is_key and touched:
+                    shown = touched[:3]
+                    more = f" +{len(touched) - 3} more" if len(touched) > 3 else ""
+                    notes.append("wallet addresses: " + ", ".join(shown) + more)
 
                 row = LedgerRow(
                     tx_hash=tx_id,
@@ -469,11 +601,12 @@ class BitcoinFetcher(BlockchainFetcher):
                     network="Bitcoin",
                     asset="BTC",
                     amount_raw=str(amount_sats),
-                    amount_decimal=str(amount_btc),
-                    tx_fee_native=str(fee_btc) if direction == "Out" else "0",
+                    amount_decimal=_sats_to_btc(amount_sats),
+                    tx_fee_native=_sats_to_btc(fee) if direction == "Out" else "0",
                     tx_status="Success",
                     category="Incoming Transfer" if direction == "In" else "Outgoing Transfer",
-                    notes="",
+                    notes="; ".join(notes),
+                    wallet_addresses=",".join(touched) if is_key else "",
                 )
                 rows.append(row)
 
@@ -484,15 +617,13 @@ class BitcoinFetcher(BlockchainFetcher):
         return sorted(rows, key=lambda r: (r.block_date, r.block_time))
 
     def _fetch_confirmed_txs(self, wallet_address: str) -> list[dict]:
-        """Fetch the full confirmed history (Blockstream pages 25 txs at a time)."""
+        """Fetch one address's full confirmed history (Blockstream pages 25 txs at a time)."""
         url = f"{self.BASE_URL}/address/{wallet_address}/txs/chain"
         transactions: list[dict] = []
         last_seen = None
         while True:
             page_url = f"{url}/{last_seen}" if last_seen else url
-            response = self.client.get(page_url)
-            response.raise_for_status()
-            page = response.json()
+            page = self._get_json(page_url)
             if not page:
                 break
             transactions.extend(page)
@@ -501,21 +632,42 @@ class BitcoinFetcher(BlockchainFetcher):
             last_seen = page[-1].get("txid")
         return transactions
 
+    # -- balances ----------------------------------------------------------
+
     def get_balance(self, wallet_address: str, as_of: Optional[datetime] = None) -> Decimal:
         """
-        Current confirmed BTC balance from Blockstream.
+        Current confirmed BTC balance from Blockstream's address totals
+        (summed over every address of an extended-key wallet).
 
         Blockstream has no "balance at date" endpoint, so a past date raises
-        HistoricalBalanceUnavailable and the caller must supply the figure.
+        HistoricalBalanceUnavailable. See balance_from_history for a figure
+        computed from the transaction history instead.
         """
         if as_of is not None and as_of < datetime.now(timezone.utc):
             raise HistoricalBalanceUnavailable(
                 "Blockstream only reports the current balance; enter a historical balance manually"
             )
-        response = self.client.get(f"{self.BASE_URL}/address/{wallet_address}")
-        response.raise_for_status()
-        stats = response.json().get("chain_stats", {})
-        sats = stats.get("funded_txo_sum", 0) - stats.get("spent_txo_sum", 0)
+        sats = 0
+        addresses = self._scan_wallet(wallet_address)["addresses"]
+        for address, stats in addresses.items():
+            if stats is None:
+                stats = addresses[address] = self._address_stats(address)
+            chain = stats.get("chain_stats", {})
+            sats += chain.get("funded_txo_sum", 0) - chain.get("spent_txo_sum", 0)
+        return Decimal(sats) / Decimal(100_000_000)
+
+    def balance_from_history(self, wallet_address: str, as_of: datetime) -> Decimal:
+        """
+        Balance at `as_of`, computed by adding up every confirmed transaction of
+        the wallet up to that time (received minus spent, fees included).
+        """
+        own = {a.lower() for a in self.wallet_addresses(wallet_address)}
+        sats = 0
+        for tx in self._wallet_txs(wallet_address):
+            block_time = tx.get("status", {}).get("block_time")
+            if block_time and datetime.fromtimestamp(block_time, tz=timezone.utc) <= as_of:
+                total_in, total_out, _ = self._net_flow(tx, own)
+                sats += total_in - total_out
         return Decimal(sats) / Decimal(100_000_000)
 
     def close(self) -> None:

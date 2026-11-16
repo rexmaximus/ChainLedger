@@ -26,7 +26,7 @@ ChainLedger is a simple, local-only tool for checking crypto records against the
 ## What problems does it solve?
 
 ### 1. Transaction Fetching
-Pull ETH and supported ERC-20 token transfers (USDC, USDT, DAI, WETH, WBTC, LINK, UNI, AAVE, MATIC) from an Ethereum wallet, or transactions from a Bitcoin wallet, with one click. No manual copy-pasting from block explorers. Other tokens are not fetched.
+Pull ETH and supported ERC-20 token transfers (USDC, USDT, DAI, WETH, WBTC, LINK, UNI, AAVE, MATIC) from an Ethereum wallet, or BTC transactions from a Bitcoin address or a whole Bitcoin wallet (given as its extended public key: xpub, ypub or zpub), with one click. No manual copy-pasting from block explorers. Other tokens are not fetched.
 
 ### 2. Proper Classification
 Transactions are classified as **INCOME**, **EXPENSE**, **TRANSFER**, or **UNKNOWN**. This matters because:
@@ -89,6 +89,8 @@ pip install -r requirements.txt
 
 Ethereum needs an Alchemy API key, entered in the form on the Accounting or Reconciliation page. Bitcoin uses Blockstream's public API and needs no key.
 
+For a Bitcoin wallet app (Ledger, Trezor, Sparrow, Electrum, BlueWallet...), enter the wallet's extended public key (xpub, ypub or zpub) rather than one address. These wallets use a new address for each payment and send change to new addresses, so a single address misses payments and makes change look like money sent. The key cannot spend funds, but it reveals every address in the wallet, and Blockstream sees each address being looked up. See [docs/reconciliation.md](docs/reconciliation.md#bitcoin-wallets).
+
 ### Run
 
 ```bash
@@ -110,7 +112,7 @@ python -m pytest
 
 | Feature | Description |
 |---------|-------------|
-| **Wallet Fetching** | Pull ETH and supported ERC-20 transfers from Ethereum (via Alchemy), or transactions from Bitcoin (via Blockstream) |
+| **Wallet Fetching** | Pull ETH and supported ERC-20 transfers from Ethereum (via Alchemy), or BTC transactions (via Blockstream) for a single address or a whole wallet from its xpub/ypub/zpub |
 | **Classification** | Auto-classify as INCOME/EXPENSE/TRANSFER with manual override support |
 | **Fiat Valuation** | Historical USD/CAD values via CoinGecko |
 | **Excel/CSV Export** | Accountant-ready spreadsheets with summaries |
@@ -119,7 +121,7 @@ python -m pytest
 | **Client Record Matching** | Matches client file lines to on-chain transactions by tx hash, or amount and date; reports unmatched lines, amount differences and on-chain transactions missing from the ledger |
 | **Own-Wallet Transfer Matching** | Pairs outgoing/incoming rows between your wallets (same txid, or amount and time window); fee recorded as a separate expense line |
 | **Invoice-to-Payment Matching** | Paid / partially paid / overpaid / unpaid per invoice (uploaded receivables or ChainLedger invoices); unmatched payments listed as exceptions |
-| **Balance Reconciliation** | Expected vs actual closing balance per wallet and asset: ETH and supported ERC-20 tokens (historical, via Alchemy) and BTC (current balance, or a manually entered one) |
+| **Balance Reconciliation** | Expected vs actual closing balance per wallet and asset: ETH and supported ERC-20 tokens (historical, via Alchemy) and BTC (opening balance computed from the wallet's full history; closing is the current balance, or a manually entered one for past periods) |
 | **Reconciliation Report** | Excel/CSV report with exception notes and a timestamped override log |
 | **Local Storage** | All data stored in local JSON files |
 

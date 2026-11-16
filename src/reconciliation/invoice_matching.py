@@ -142,7 +142,8 @@ def match_invoices_to_payments(
             if payer and sender and sender != payer:
                 return False
             wallet = (tx.get("wallet_address") or tx.get("to_address") or "").lower()
-            if receiving and wallet and wallet != receiving:
+            members = {a.lower() for a in (tx.get("wallet_addresses") or "").split(",") if a}
+            if receiving and wallet and wallet != receiving and receiving not in members:
                 return False
             return True
 

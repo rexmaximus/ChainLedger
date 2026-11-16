@@ -29,7 +29,7 @@ from flask_cors import CORS
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.wallet import LedgerGenerator, validate_ethereum_address, validate_bitcoin_address, SUPPORTED_NETWORKS
+from src.wallet import LedgerGenerator, validate_ethereum_address, validate_bitcoin_wallet, parse_extended_key, InvalidExtendedKey, SUPPORTED_NETWORKS
 from src.exports import ExportService, get_price_oracle
 from src.invoices import InvoiceGenerator
 from src.imports import (
@@ -375,6 +375,23 @@ class MetadataManager:
 # Flask App Factory
 # =============================================================================
 
+def _wallet_error(blockchain: str, address: str) -> Optional[str]:
+    """Why `address` is not usable on `blockchain`, or None if it is."""
+    if blockchain == "ethereum":
+        return None if validate_ethereum_address(address) else f"Invalid Ethereum address: {address}"
+    if blockchain == "bitcoin":
+        if address[:4].lower() in {"xpub", "ypub", "zpub", "tpub", "upub", "vpub", "xprv", "yprv", "zprv"}:
+            try:
+                parse_extended_key(address)
+                return None
+            except (InvalidExtendedKey, ValueError) as e:
+                return f"Invalid extended public key: {e}"
+        if validate_bitcoin_wallet(address):
+            return None
+        return f"Invalid Bitcoin address or extended public key (xpub/ypub/zpub): {address}"
+    return None
+
+
 def create_app(data_dir: Optional[Path] = None) -> Flask:
     """Create and configure the Flask application."""
 
@@ -433,6 +450,10 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
         if wallet_type not in ("self-custodial", "exchange"):
             wallet_type = "self-custodial"
 
+        error = _wallet_error(blockchain, address)
+        if error:
+            return jsonify({"error": error}), 400
+
         metadata.save_wallet(address, name, blockchain, wallet_type)
         return jsonify({"success": True})
 
@@ -469,10 +490,9 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
                 return jsonify({"success": False, "error": "API key required"}), 400
 
             for addr in wallet_addresses:
-                if blockchain == "ethereum" and not validate_ethereum_address(addr):
-                    return jsonify({"success": False, "error": f"Invalid address: {addr}"}), 400
-                if blockchain == "bitcoin" and not validate_bitcoin_address(addr):
-                    return jsonify({"success": False, "error": f"Invalid address: {addr}"}), 400
+                error = _wallet_error(blockchain, addr)
+                if error:
+                    return jsonify({"success": False, "error": error}), 400
 
             # Date range
             from_date = None
@@ -675,10 +695,10 @@ def create_app(data_dir: Optional[Path] = None) -> Flask:
             wallet_addresses = [w.strip() for w in data.get("wallet_addresses", "").split(",") if w.strip()]
             if not wallet_addresses:
                 return jsonify({"success": False, "error": "At least one wallet address required"}), 400
-            validate = validate_ethereum_address if blockchain == "ethereum" else validate_bitcoin_address
             for addr in wallet_addresses:
-                if not validate(addr):
-                    return jsonify({"success": False, "error": f"Invalid address: {addr}"}), 400
+                error = _wallet_error(blockchain, addr)
+                if error:
+                    return jsonify({"success": False, "error": error}), 400
 
             try:
                 period_start = date.fromisoformat(data.get("period_start", ""))

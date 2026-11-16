@@ -28,7 +28,7 @@
         <div class="form-group">
             <label for="walletAddresses">Your Wallet Address(es)</label>
             <textarea id="walletAddresses" rows="2" placeholder="Comma-separated. Include every wallet you move funds between."></textarea>
-            <small class="form-hint">Saved self-custodial wallets on this blockchain are always treated as yours for transfer matching.</small>
+            <small class="form-hint">Saved self-custodial wallets on this blockchain are always treated as yours for transfer matching. Bitcoin: enter a wallet's extended public key (xpub/ypub/zpub) to include all its addresses; a plain address covers only that one address. Scanning a key checks each address with Blockstream and can take a minute.</small>
             {% if wallets %}
             <div class="saved-wallets">
                 <small>Quick add:</small>

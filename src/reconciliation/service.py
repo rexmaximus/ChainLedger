@@ -68,8 +68,15 @@ def fetch_inputs(
                 spec["opening_balance"] = fmt_amount(opening)
                 spec["opening_source"] = "chain API"
             except HistoricalBalanceUnavailable as e:
-                spec["opening_balance"] = None
-                spec["opening_source"] = f"unavailable: {e}"
+                history = getattr(generator.fetcher, "balance_from_history", None)
+                if history is not None:
+                    # Bitcoin: add up the wallet's full confirmed history up to the period start
+                    opening = history(address, start_dt - timedelta(seconds=1))
+                    spec["opening_balance"] = fmt_amount(opening)
+                    spec["opening_source"] = "computed from the wallet's full transaction history"
+                else:
+                    spec["opening_balance"] = None
+                    spec["opening_source"] = f"unavailable: {e}"
             # Closing = balance at the end of the period (current if the period is not over)
             try:
                 closing = generator.get_balance(address, None if end_dt >= now else end_dt)
@@ -78,6 +85,13 @@ def fetch_inputs(
             except HistoricalBalanceUnavailable as e:
                 spec["actual_closing"] = None
                 spec["actual_source"] = f"unavailable: {e}"
+            summary = getattr(generator.fetcher, "wallet_summary", None)
+            if summary is not None:
+                spec["wallet_scope"] = summary(address)
+                if spec["wallet_scope"] != "single address":
+                    for key in ("opening_source", "actual_source"):
+                        if not spec[key].startswith("unavailable"):
+                            spec[key] += f" ({spec['wallet_scope']})"
             balances.append(spec)
             if network == "ethereum":
                 balances.extend(_token_balance_specs(generator.fetcher, address, rows, spec, start_dt, end_dt, now))
