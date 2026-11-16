@@ -116,11 +116,8 @@ Once a transaction is fetched and enriched with prices, those prices are based o
 
 ## Limited Token Support
 
-ChainLedger supports common tokens (ETH, BTC, USDC, USDT, DAI, and about 20 others). Obscure tokens may:
-
-- Not have price data available
-- Be treated as having zero value
-- Require manual valuation
+- **Fetching:** only native ETH transfers on Ethereum and BTC on Bitcoin. ERC-20 token transfers (USDC, USDT, DAI, etc.) are not fetched yet, so payments in those tokens do not appear in exports or reconciliation.
+- **Prices:** historical USD/CAD prices are looked up for ETH, BTC, USDC, USDT, DAI, WETH, WBTC, MATIC, LINK, UNI and AAVE. Any other symbol is valued at $1.00, and a failed price lookup gives $0. Check these values manually.
 
 ---
 

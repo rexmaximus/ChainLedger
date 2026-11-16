@@ -17,7 +17,7 @@ ChainLedger is a simple, local-only tool for checking crypto records against the
 ## Who is this for?
 
 - Accountants and bookkeepers reconciling a client's crypto wallet activity against the client's records
-- Freelancers paid in cryptocurrency (ETH, BTC, USDC, etc.)
+- Freelancers paid in ETH or BTC
 - Independent contractors who need to track crypto income
 - Anyone who wants clean transaction records without complex software
 
@@ -26,7 +26,7 @@ ChainLedger is a simple, local-only tool for checking crypto records against the
 ## What problems does it solve?
 
 ### 1. Transaction Fetching
-Pull all transactions from your Ethereum or Bitcoin wallet with one click. No manual copy-pasting from block explorers.
+Pull ETH transfers from an Ethereum wallet, or transactions from a Bitcoin wallet, with one click. No manual copy-pasting from block explorers. ERC-20 token transfers (such as USDC) are not fetched yet.
 
 ### 2. Proper Classification
 Transactions are classified as **INCOME**, **EXPENSE**, **TRANSFER**, or **UNKNOWN**. This matters because:
@@ -127,9 +127,13 @@ Not implemented yet: bank statement reconciliation, PDF import, direct QuickBook
 
 ---
 
-## Supported Tokens
+## Supported Assets
 
-ETH, BTC, USDC, USDT, DAI, WETH, WBTC, MATIC, LINK, UNI, AAVE, CRV, MKR, COMP, SNX, YFI, SUSHI, 1INCH, ENS, LDO, RPL, FRAX, LUSD
+| Where | Assets |
+|-------|--------|
+| Fetched from the blockchain | ETH (native transfers on Ethereum) and BTC. ERC-20 tokens such as USDC are not fetched yet. |
+| Historical USD/CAD prices (CoinGecko) | ETH, BTC, USDC, USDT, DAI, WETH, WBTC, MATIC, LINK, UNI, AAVE. Any other symbol is valued at $1.00. |
+| Invoices and client files | Any asset symbol, but only ETH and BTC lines can be matched to fetched on-chain transactions. |
 
 ---
 

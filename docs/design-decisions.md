@@ -100,13 +100,13 @@ ui/              → Web interface that ties it all together
 
 **Why:**
 - Free tier is sufficient for typical usage
-- Covers all major tokens
+- Covers the major tokens ChainLedger looks up (ETH, BTC and nine common ERC-20 tokens)
 - Provides historical data by date
 
 **Implementation details:**
 - Prices are cached in memory to reduce API calls
 - Rate limiting (1.5s between requests) to stay within free tier
-- Fallback: stablecoins default to $1.00 if lookup fails
+- Fallback: symbols without a CoinGecko mapping are valued at $1.00; a failed lookup gives $0
 
 ---
 
